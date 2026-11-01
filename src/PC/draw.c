@@ -11,6 +11,7 @@
 #include "win32.h"
 
 IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n);
+IMPORT HANDLE WINAPI CreateFileA(const char* name, u32 access, u32 share, void* sa, u32 disp, u32 flags, HANDLE tmpl);
 
 #define XRS(i)      (((volatile u32*)0x001e2a94)[i])            /* D3D__RenderState */
 #define XTS(s, i)   (((volatile u32*)0x001e2890)[(s) * 32 + (i)]) /* D3D__TextureState */
@@ -130,6 +131,19 @@ static int fmt_linear(u32 f)
     return (f >= 0x10 && f <= 0x20) || f == 0x2E || f == 0x30 || f == 0x35 || f == 0x3F;
 }
 
+static void dump_texture(const u32* res, const u8* src, u32 bytes)
+{
+    char b[4];
+    if (!GetEnvironmentVariableA("PC_DUMPTEX", b, 4)) return;
+    char name[32] = "tex_00000000.bin";
+    for (int i = 0; i < 8; i++) name[4 + i] = "0123456789abcdef"[((u32)res >> (28 - i * 4)) & 15];
+    HANDLE f = CreateFileA(name, 0x40000000, 0, NULL, 2, 0x80, NULL);
+    u32 w;
+    WriteFile(f, res, 20, &w, NULL);                 /* Xbox resource header */
+    WriteFile(f, src, bytes, &w, NULL);
+    CloseHandle(f);
+}
+
 static IUnk* upload_texture(const u32* res)
 {
     u32 format = res[3], size = res[4], data = res[1];
@@ -149,6 +163,7 @@ static IUnk* upload_texture(const u32* res)
     if (VCALL(g_dev, DEV_CreateTexture, PFN_CreateTex)(g_dev, w, h, levels, 0, d3dfmt, 1 /* MANAGED */, &tex, NULL) < 0)
         return NULL;
     u32 bpp = xfmt_bpp(f) / 8;
+    dump_texture(res, src, level_bytes(f, w, h));
     for (u32 l = 0, lw = w, lh = h; l < levels; l++) {
         D3DLOCKED_RECT lr;
         if (VCALL(tex, TEX_LockRect, PFN_TexLock)(tex, l, &lr, NULL, 0) < 0) break;
@@ -398,8 +413,6 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
 /* ------------------------------------------------------------ screenshots */
 
 /* F12, or the frame number in env PC_SHOT: back buffer -> shot_<frame>.bmp */
-IMPORT HANDLE WINAPI CreateFileA(const char* name, u32 access, u32 share, void* sa, u32 disp, u32 flags, HANDLE tmpl);
-IMPORT BOOL   WINAPI CloseHandle(HANDLE h);
 
 typedef HRESULT (WINAPI *PFN_GetBB)(IUnk*, u32, u32, u32, IUnk**);
 typedef HRESULT (WINAPI *PFN_CreateOff)(IUnk*, u32, u32, u32, u32, IUnk**, void*);

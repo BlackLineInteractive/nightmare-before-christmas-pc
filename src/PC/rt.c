@@ -40,6 +40,7 @@ IMPORT BOOL   WINAPI Thread32First(HANDLE snap, void* te);
 IMPORT BOOL   WINAPI Thread32Next(HANDLE snap, void* te);
 IMPORT u32    WINAPI GetCurrentProcessId(void);
 IMPORT BOOL   WINAPI CloseHandle(HANDLE h);
+IMPORT BOOL   WINAPI IsBadReadPtr(const void* p, size_t n);
 
 static HANDLE g_main_thread;
 
@@ -56,8 +57,9 @@ static void report_thread(HANDLE t, u32 tid)
     log_hex("[pc] watchdog thread", tid);
     log_hex("[pc]   eip", eip);
     u32* sp = (u32*)esp;
-    int shown = 0;
-    for (int i = 0; i < 1024 && shown < 8; i++) {
+    int shown = 0, n = 1024;
+    while (n && IsBadReadPtr(sp, n * 4)) n /= 2;     /* stay inside the stack */
+    for (int i = 0; i < n && shown < 8; i++) {
         u32 r = sp[i];
         if (r < 0x12006 || r >= 0x431000) continue;
         const u8* c = (const u8*)r;
