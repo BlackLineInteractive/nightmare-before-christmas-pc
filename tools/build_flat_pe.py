@@ -14,6 +14,7 @@ import struct
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xapi_port
+import pc_render
 
 def align(val, alignment):
     return (val + alignment - 1) & ~(alignment - 1)
@@ -111,10 +112,12 @@ def build_flat_binary(xbe_path, pe_path):
 
     kernel_names = read_kernel_thunks(image_mem, base_addr)
     port_rva = align(total_span, section_alignment)
-    port, info = xapi_port.build_port_section(image_mem, base_addr, port_rva, kernel_names)
+    renderer = (pc_render.compile_renderer(), pc_render.PC_TABLE, pc_render.dll_of)
+    port, info = xapi_port.build_port_section(image_mem, base_addr, port_rva, kernel_names, renderer)
     st = info['stats']
     print(f"[+] XAPI: {st['xapi']} functions -> kernel32, {st['stubs']} X* replacements")
     print(f"[+] Kernel thunks: {st['bound']} -> Windows, {st['data']} data, {st['traps']} unported (trap)")
+    print(f"[+] D3D + XPP: {st['d3d']} entry points -> PC renderer / input (src/PC)")
     print(f"[+] Paths: host0: builder + {st['paths']} drive strings -> .\\; KPCR sites: {st['kpcr']}")
 
     # 5. PE headers: .flat (XBE 1:1) + .port

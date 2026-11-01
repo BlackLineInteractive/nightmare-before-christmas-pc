@@ -12,6 +12,8 @@ import table, a few X* replacements, and the start-up routine.
 
 import struct
 
+import coff_link
+
 # ------------------------------------------------------------------ tables --
 
 # XAPI entry point -> Windows function with the same signature.
@@ -69,12 +71,9 @@ XAPI_TO_WIN32 = {
     0x1c1aae: 'HeapSize',
 }
 
-# XAPI functions with no Win32 twin: entry -> stub name (see build_stubs).
+# XAPI functions with no Win32 twin: entry -> stub name (see build_port_section).
+# XPhysicalAlloc / XMemAlloc live in src/PC/memory.c (tools/pc_render.py).
 XAPI_TO_STUB = {
-    0x1bdc57: 'XPhysicalAlloc',
-    0x1bdcc7: 'XPhysicalFree',
-    0x1bfe94: 'XMemAlloc',
-    0x1bff34: 'XMemFree',
     0x1bdcf2: 'XGetLanguage',
     0x1bde89: 'XGetVideoFlags',
     0x1bded2: 'XGetAVPack',
@@ -327,10 +326,11 @@ def jmp_mem(addr):
 
 # --------------------------------------------------------- .port section --
 
-def build_port_section(image_mem, base, sec_rva, kernel_names):
+def build_port_section(image_mem, base, sec_rva, kernel_names, renderer=None):
     """Fill image_mem patches and return (section bytes, info dict).
 
     kernel_names: [(thunk_va, ordinal, name)] read from the XBE thunk table.
+    renderer: (COFF object, {xbox va: (symbol, desc)}, dll_of) for the PC renderer.
     """
     imports = {}  # dll -> [func]
 
@@ -345,6 +345,10 @@ def build_port_section(image_mem, base, sec_rva, kernel_names):
                'OutputDebugStringA'):
         need('kernel32.dll', fn)
     need('ntdll.dll', 'sprintf')
+    if renderer:
+        obj, table, dll_of = renderer
+        for fn in coff_link.imports_of(obj):
+            need(dll_of(fn), fn)
     for _, _, name in kernel_names:
         if base_name(name) in KERNEL_TO_WIN32:
             need(*KERNEL_TO_WIN32[base_name(name)])
@@ -404,14 +408,6 @@ def build_port_section(image_mem, base, sec_rva, kernel_names):
         a.align()
         stubs[name] = a.here()
 
-    stub('XPhysicalAlloc')        # (size, maxaddr, align, protect)
-    a.push(4); a.push(0x3000); a.push_arg(0x0c); a.push(0); a.call_mem(iat['VirtualAlloc']); a.ret(0x10)
-    stub('XPhysicalFree')         # (p)
-    a.push(0x8000); a.push(0); a.push_arg(0x0c); a.call_mem(iat['VirtualFree']); a.ret(4)
-    stub('XMemAlloc')             # (size, attributes)
-    a.call_mem(iat['GetProcessHeap']); a.push_arg(4); a.push(8); a.push_eax(); a.call_mem(iat['HeapAlloc']); a.ret(8)
-    stub('XMemFree')              # (p, attributes)
-    a.call_mem(iat['GetProcessHeap']); a.push_arg(4); a.push(0); a.push_eax(); a.call_mem(iat['HeapFree']); a.ret(8)
     stub('XGetLanguage')          # English
     a.mov_eax(1); a.ret()
     stub('XGetVideoFlags')
@@ -459,6 +455,14 @@ def build_port_section(image_mem, base, sec_rva, kernel_names):
     a.push_eax(); a.call_mem(iat['ExitProcess'])
     sec += a.b
 
+    # PC renderer (src/PC), linked after the stubs
+    rsyms = {}
+    if renderer:
+        while len(sec) % 16:
+            sec.append(0xCC)
+        blob, rsyms = coff_link.link(obj, va0 + len(sec), iat)
+        sec += blob
+
     # -- patches on the XBE image -----------------------------------------
     def put(va, data, expect=None):
         off = va - base
@@ -504,11 +508,17 @@ def build_port_section(image_mem, base, sec_rva, kernel_names):
         put(va, jmp_mem(iat[fn]))
     for va, name in XAPI_TO_STUB.items():
         put(va, jmp_rel(va, stubs[name]))
+    if renderer:
+        for va, (sym, _) in table.items():
+            if sym not in rsyms:
+                raise SystemExit(f'[!] renderer symbol missing: {sym}')
+            put(va, jmp_rel(va, rsyms[sym]))
 
     info = dict(import_dir=import_dir, iat_dir=iat_dir, entry_rva=entry - base,
                 tls_dir=(TLS_DIRECTORY_VA - base, 0x18),
                 stats=dict(xapi=len(XAPI_TO_WIN32), stubs=len(XAPI_TO_STUB), bound=n_bound,
-                           traps=n_trap, data=n_data, paths=n_paths, kpcr=n_kpcr))
+                           traps=n_trap, data=n_data, paths=n_paths, kpcr=n_kpcr,
+                           d3d=len(table) if renderer else 0))
     return bytes(sec), info
 
 
