@@ -1,0 +1,129 @@
+; xboxkrnl.exe ordinals imported by default.xbe (from nxdk xboxkrnl.exe.def, CC0-1.0)
+; Implemented in xboxkrnl.c as xb_<Name>; build_flat_pe.py points each XBE
+; kernel thunk at the matching function / variable.
+EXPORTS
+    AvGetSavedDataAddress@0                  @    1 NONAME
+    AvSendTVEncoderOption@16                 @    2 NONAME
+    AvSetDisplayMode@24                      @    3 NONAME
+    AvSetSavedDataAddress@4                  @    4 NONAME
+    DbgPrint                                 @    8 NONAME
+    ExAllocatePoolWithTag@8                  @   15 NONAME
+    ExEventObjectType                        @   16 NONAME DATA
+    ExFreePool@4                             @   17 NONAME
+    ExQueryPoolBlockSize@4                   @   23 NONAME
+    ExQueryNonVolatileSetting@20             @   24 NONAME
+    HalDiskCachePartitionCount               @   40 NONAME DATA
+    HalGetInterruptVector@8                  @   44 NONAME
+    HalReadWritePCISpace@24                  @   46 NONAME
+    HalRegisterShutdownNotification@8        @   47 NONAME
+    HalReturnToFirmware@4                    @   49 NONAME
+    IoCreateDevice@24                        @   65 NONAME
+    IoCreateSymbolicLink@8                   @   67 NONAME
+    IoDeleteSymbolicLink@4                   @   69 NONAME
+    IoFileObjectType                         @   71 NONAME DATA
+    IoInvalidDeviceRequest@8                 @   74 NONAME
+    IoStartNextPacket@4                      @   81 NONAME
+    IoStartPacket@12                         @   83 NONAME
+    @IofCompleteRequest@8                    @   87 NONAME
+    KeBugCheck@4                             @   95 NONAME
+    KeCancelTimer@4                          @   97 NONAME
+    KeConnectInterrupt@4                     @   98 NONAME
+    KeDelayExecutionThread@12                @   99 NONAME
+    KeDisconnectInterrupt@4                  @  100 NONAME
+    KeInitializeDpc@12                       @  107 NONAME
+    KeInitializeInterrupt@28                 @  109 NONAME
+    KeInitializeTimerEx@8                    @  113 NONAME
+    KeInsertQueueDpc@12                      @  119 NONAME
+    KeQuerySystemTime@4                      @  128 NONAME
+    KeRaiseIrqlToDpcLevel@0                  @  129 NONAME
+    KeRemoveQueueDpc@4                       @  137 NONAME
+    KeRestoreFloatingPointState@4            @  139 NONAME
+    KeSaveFloatingPointState@4               @  142 NONAME
+    KeSetBasePriorityThread@8                @  143 NONAME
+    KeSetEvent@12                            @  145 NONAME
+    KeSetTimer@16                            @  149 NONAME
+    KeStallExecutionProcessor@4              @  151 NONAME
+    KeSynchronizeExecution@12                @  153 NONAME
+    KeTickCount                              @  156 NONAME DATA
+    KeWaitForSingleObject@20                 @  159 NONAME
+    @KfRaiseIrql@4                           @  160 NONAME
+    @KfLowerIrql@4                           @  161 NONAME
+    LaunchDataPage                           @  164 NONAME DATA
+    MmAllocateContiguousMemory@4             @  165 NONAME
+    MmAllocateContiguousMemoryEx@20          @  166 NONAME
+    MmClaimGpuInstanceMemory@8               @  168 NONAME
+    MmFreeContiguousMemory@4                 @  171 NONAME
+    MmGetPhysicalAddress@4                   @  173 NONAME
+    MmLockUnlockBufferPages@12               @  175 NONAME
+    MmLockUnlockPhysicalPage@8               @  176 NONAME
+    MmPersistContiguousMemory@12             @  178 NONAME
+    MmQueryAddressProtect@4                  @  179 NONAME
+    MmQueryAllocationSize@4                  @  180 NONAME
+    MmSetAddressProtect@12                   @  182 NONAME
+    NtAllocateVirtualMemory@20               @  184 NONAME
+    NtClose@4                                @  187 NONAME
+    NtCreateEvent@16                         @  189 NONAME
+    NtCreateFile@36                          @  190 NONAME
+    NtCreateMutant@12                        @  192 NONAME
+    NtCreateSemaphore@16                     @  193 NONAME
+    NtCreateTimer@12                         @  194 NONAME
+    NtDeviceIoControlFile@40                 @  196 NONAME
+    NtDuplicateObject@12                     @  197 NONAME
+    NtFlushBuffersFile@8                     @  198 NONAME
+    NtFreeVirtualMemory@12                   @  199 NONAME
+    NtFsControlFile@40                       @  200 NONAME
+    NtOpenFile@24                            @  202 NONAME
+    NtOpenSymbolicLinkObject@8               @  203 NONAME
+    NtQueryFullAttributesFile@8              @  210 NONAME
+    NtQueryInformationFile@20                @  211 NONAME
+    NtQuerySymbolicLinkObject@12             @  215 NONAME
+    NtQueryVirtualMemory@8                   @  217 NONAME
+    NtQueryVolumeInformationFile@20          @  218 NONAME
+    NtReadFile@32                            @  219 NONAME
+    NtReleaseMutant@8                        @  221 NONAME
+    NtReleaseSemaphore@12                    @  222 NONAME
+    NtResumeThread@8                         @  224 NONAME
+    NtSetEvent@8                             @  225 NONAME
+    NtSetInformationFile@20                  @  226 NONAME
+    NtSetTimerEx@32                          @  229 NONAME
+    NtSuspendThread@8                        @  231 NONAME
+    NtUserIoApcDispatcher@12                 @  232 NONAME
+    NtWaitForSingleObject@12                 @  233 NONAME
+    NtWaitForSingleObjectEx@16               @  234 NONAME
+    NtWaitForMultipleObjectsEx@24            @  235 NONAME
+    NtWriteFile@32                           @  236 NONAME
+    NtYieldExecution@0                       @  238 NONAME
+    ObReferenceObjectByHandle@12             @  246 NONAME
+    @ObfDereferenceObject@4                  @  250 NONAME
+    PsCreateSystemThreadEx@40                @  255 NONAME
+    PsTerminateSystemThread@4                @  258 NONAME
+    PsThreadObjectType                       @  259 NONAME DATA
+    RtlAnsiStringToUnicodeString@12          @  260 NONAME
+    RtlCompareMemoryUlong@12                 @  269 NONAME
+    RtlEnterCriticalSection@4                @  277 NONAME
+    RtlEqualString@12                        @  279 NONAME
+    RtlInitAnsiString@8                      @  289 NONAME
+    RtlInitializeCriticalSection@4           @  291 NONAME
+    RtlLeaveCriticalSection@4                @  294 NONAME
+    RtlNtStatusToDosError@4                  @  301 NONAME
+    RtlRaiseException@4                      @  302 NONAME
+    RtlTimeFieldsToTime@8                    @  304 NONAME
+    RtlTimeToTimeFields@8                    @  305 NONAME
+    RtlUnwind@16                             @  312 NONAME
+    XboxHardwareInfo                         @  322 NONAME DATA
+    XboxHDKey                                @  323 NONAME DATA
+    XboxKrnlVersion                          @  324 NONAME DATA
+    XboxSignatureKey                         @  325 NONAME DATA
+    XeImageFileName                          @  326 NONAME DATA
+    XeLoadSection@4                          @  327 NONAME
+    XeUnloadSection@4                        @  328 NONAME
+    XcSHAInit@4                              @  335 NONAME
+    XcSHAUpdate@12                           @  336 NONAME
+    XcSHAFinal@8                             @  337 NONAME
+    XcHMAC@28                                @  340 NONAME
+    XboxAlternateSignatureKeys               @  354 NONAME DATA
+    HalBootSMCVideoMode                      @  356 NONAME DATA
+    IdexChannelObject                        @  357 NONAME DATA
+    HalIsResetOrShutdownPending@0            @  358 NONAME
+    IoMarkIrpMustComplete@4                  @  359 NONAME
+    HalInitiateShutdown@0                    @  360 NONAME
