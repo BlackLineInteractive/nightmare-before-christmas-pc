@@ -73,6 +73,8 @@ static u32    g_viewport[6];
 #define XBOX_D3D_g_pDevice  (*(u32*)0x001e2d28)
 #define XBOX_D3D_DEVICE     0x001e2d30
 
+static u32 WINAPI vblank_thread(void* arg);
+
 static s32 WINAPI wndproc(HWND h, u32 msg, u32 wp, s32 lp)
 {
     if (msg == WM_CLOSE || msg == WM_DESTROY) ExitProcess(0);
@@ -97,6 +99,8 @@ typedef HRESULT (WINAPI *PFN_Scene)(IUnk*);
 HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32* pp, u32* ppDevice)
 {
     if (pp && pp[0] && pp[1]) { g_width = pp[0]; g_height = pp[1]; }
+    start_watchdog();
+    CreateThread(NULL, 0, vblank_thread, NULL, 0, NULL);
     log_hex("[pc] CreateDevice width", g_width);
     log_hex("[pc] CreateDevice height", g_height);
 
@@ -316,6 +320,34 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count) { }
 /* ------------------------------------------------------------------ misc */
 
 void WINAPI pc_SetPushBufferSize(u32 size, u32 kickoff) { }
-void WINAPI pc_Set1(u32 v) { }          /* single-argument device field setters / callbacks */
+void WINAPI pc_Set1(u32 v) { }          /* single-argument device field setters */
+
+/* Vertical-blank callbacks (device +0x1db4 / +0x1db8). On the Xbox they run
+ * from the GPU's vblank interrupt; here a 60 Hz thread calls them. The game
+ * paces its frames on them (event set by one, frame counter in the other). */
+typedef void (*VBLANKCB)(void*);
+static volatile VBLANKCB g_vblank_cb[2];
+static u32 g_vblank_data[3];             /* D3DVBLANKDATA: VBlank, Swap, Flags */
+
+void WINAPI pc_SetVBlankCallback_1db4(VBLANKCB cb) { g_vblank_cb[0] = cb; }
+void WINAPI pc_SetVBlankCallback_1db8(VBLANKCB cb) { g_vblank_cb[1] = cb; }
+
+IMPORT HANDLE WINAPI CreateWaitableTimerA(void* sa, BOOL manual, const char* name);
+IMPORT BOOL   WINAPI SetWaitableTimer(HANDLE t, const u64* due, s32 period, void* fn, void* arg, BOOL resume);
+IMPORT u32    WINAPI WaitForSingleObject(HANDLE h, u32 ms);
+
+static u32 WINAPI vblank_thread(void* arg)
+{
+    HANDLE t = CreateWaitableTimerA(NULL, 0, NULL);
+    u64 due = (u64)-166667;                  /* 16.7 ms, relative */
+    SetWaitableTimer(t, &due, 17, NULL, NULL, 0);
+    for (;;) {
+        WaitForSingleObject(t, 0xFFFFFFFF);
+        g_vblank_data[0]++;
+        g_vblank_data[1] = g_frames;
+        for (int i = 0; i < 2; i++)
+            if (g_vblank_cb[i]) g_vblank_cb[i](g_vblank_data);
+    }
+}
 u32  WINAPI pc_Get1(u32 v) { return 0; }
 void WINAPI pc_BlockUntilVerticalBlank(void) { Sleep(0); }
