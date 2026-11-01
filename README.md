@@ -1,4 +1,5 @@
-# OogieEngine — *The Nightmare Before Christmas: Oogie's Revenge*
+# OogieEngine - *The Nightmare Before Christmas: Oogie's Revenge*
+
 ### Native C++17 Reverse-Engineering Toolkit & PC Reimplementation Engine
 
 [![C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
@@ -39,6 +40,7 @@ Full reverse-engineering analysis and format specifications are documented in:
 👉 **[`docs/REVERSE_ENGINEERING_SPECIFICATION.md`](docs/REVERSE_ENGINEERING_SPECIFICATION.md)**
 
 Topics covered:
+
 1. **Executable Analysis (`default.xbe`):** Native 32-bit x86 Intel architecture, 31 sections, Capcom source code tree (`\Project\nightmareXbox\app\...`), player states (`JACK_00`..`JACK_16`).
 2. **Container Formats:** Capcom LZ Type 2 decompression algorithm and `@STM` format specification.
 3. **Model Formats:** `P2OD` (static stages), `BMD` (skinned skeletal characters), and `PMT` (134 skeletal animation files).
@@ -51,11 +53,13 @@ Topics covered:
 ## Building & Running
 
 ### Prerequisites
+
 - **C++17 Compiler:** Clang 14+ (macOS Xcode), GCC 10+, or MSVC 2019+
 - **CMake:** Version 3.20 or newer
 - **Raylib:** Version 5.0+ (`brew install raylib` on macOS)
 
 ### Build Instructions
+
 ```bash
 # Clone the repository
 git clone https://github.com/vovavovchok/oogie-capcom-engine.git
@@ -67,6 +71,7 @@ cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 ```
 
 ### Running the Viewer
+
 ```bash
 # Launch interactive viewer (loads Halloween Town by default)
 ./build/oogie_viewer
