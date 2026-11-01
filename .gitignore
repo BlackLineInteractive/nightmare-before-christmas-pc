@@ -1,9 +1,10 @@
 rom/
-extracted/
 build/
-unpacked_stm/
 *.stm
+extracted/
+unpacked_stm/
 __pycache__/
 .DS_Store
 .env
-external/*imgui.ini
+imgui.ini
+external/*
