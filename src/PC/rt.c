@@ -35,34 +35,54 @@ IMPORT u32    WINAPI SuspendThread(HANDLE h);
 IMPORT u32    WINAPI ResumeThread(HANDLE h);
 IMPORT BOOL   WINAPI GetThreadContext(HANDLE h, void* ctx);
 
+IMPORT HANDLE WINAPI CreateToolhelp32Snapshot(u32 flags, u32 pid);
+IMPORT BOOL   WINAPI Thread32First(HANDLE snap, void* te);
+IMPORT BOOL   WINAPI Thread32Next(HANDLE snap, void* te);
+IMPORT u32    WINAPI GetCurrentProcessId(void);
+IMPORT BOOL   WINAPI CloseHandle(HANDLE h);
+
 static HANDLE g_main_thread;
 
-static u32 WINAPI watchdog(void* arg)
+/* EIP and the return addresses into the exe that are on a thread's stack */
+static void report_thread(HANDLE t, u32 tid)
 {
     static u32 ctx[0x2CC / 4];
-    for (;;) {
-        Sleep(5000);
-        SuspendThread(g_main_thread);
-        ctx[0] = 0x10001;                       /* CONTEXT_CONTROL */
-        BOOL ok = GetThreadContext(g_main_thread, ctx);
-        ResumeThread(g_main_thread);
-        if (!ok) continue;
-        u32 eip = ctx[0xB8 / 4], esp = ctx[0xC4 / 4];
-        log_hex("[pc] watchdog main thread eip", eip);
-        u32* sp = (u32*)esp;
-        int shown = 0;
-        for (int i = 0; i < 512 && shown < 8; i++) {
-            u32 r = sp[i];
-            if (r < 0x12006 || r >= 0x431000) continue;
-            const u8* c = (const u8*)r;
-            if (c[-5] == 0xE8 || (c[-6] == 0xFF && (c[-5] & 0x38) == 0x10) || (c[-2] == 0xFF && (c[-1] & 0x38) == 0x10)) {
-                log_hex("[pc]   called from", r);
-                shown++;
-            }
+    SuspendThread(t);
+    ctx[0] = 0x10001;                       /* CONTEXT_CONTROL */
+    BOOL ok = GetThreadContext(t, ctx);
+    ResumeThread(t);
+    if (!ok) return;
+    u32 eip = ctx[0xB8 / 4], esp = ctx[0xC4 / 4];
+    log_hex("[pc] watchdog thread", tid);
+    log_hex("[pc]   eip", eip);
+    u32* sp = (u32*)esp;
+    int shown = 0;
+    for (int i = 0; i < 1024 && shown < 8; i++) {
+        u32 r = sp[i];
+        if (r < 0x12006 || r >= 0x431000) continue;
+        const u8* c = (const u8*)r;
+        if (c[-5] == 0xE8 || (c[-6] == 0xFF && (c[-5] & 0x38) == 0x10) || (c[-2] == 0xFF && (c[-1] & 0x38) == 0x10)) {
+            log_hex("[pc]   called from", r);
+            shown++;
         }
     }
 }
 
+static u32 WINAPI watchdog(void* arg)
+{
+    u32 self = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    for (;;) {
+        Sleep(8000);
+        HANDLE snap = CreateToolhelp32Snapshot(4 /* TH32CS_SNAPTHREAD */, 0);
+        u32 te[7] = { 28 };                 /* THREADENTRY32: size, usage, tid, owner pid, ... */
+        for (BOOL more = Thread32First(snap, te); more; more = Thread32Next(snap, te)) {
+            if (te[3] != pid || te[2] == self) continue;
+            HANDLE t = OpenThread(0x1FFFFF, 0, te[2]);
+            if (t) { report_thread(t, te[2]); CloseHandle(t); }
+        }
+        CloseHandle(snap);
+    }
+}
 static void start_watchdog(void)
 {
     g_main_thread = OpenThread(0x1FFFFF, 0, GetCurrentThreadId());

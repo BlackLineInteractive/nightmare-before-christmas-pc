@@ -46,7 +46,13 @@ HRESULT WINAPI pc_CreateVertexShader(const u32* decl, const u32* fn, u32* handle
     const char* src = g_vsh_src[i];
     size_t n = 0; while (src[n]) n++;
     IUnk *code = NULL, *err = NULL;
-    HRESULT hr = D3DCompile(src, n, "xbox_vsh", NULL, NULL, "main", "vs_2_0", 0, 0, &code, &err);
+    /* full optimisation keeps the temporaries inside vs_2_0's twelve; vs_2_a has more */
+    HRESULT hr = D3DCompile(src, n, "xbox_vsh", NULL, NULL, "main", "vs_2_0", 1u << 15, 0, &code, &err);
+    if (hr < 0) {
+        if (err) VCALL(err, 2, PFN_Scene)(err);
+        err = NULL;
+        hr = D3DCompile(src, n, "xbox_vsh", NULL, NULL, "main", "vs_2_a", 1u << 15, 0, &code, &err);
+    }
     if (hr < 0) {
         log_hex("[pc] vertex shader compile failed", i);
         if (err) { log_str((const char*)VCALL(err, 3, PFN_BlobPtr)(err)); log_str("\n"); }

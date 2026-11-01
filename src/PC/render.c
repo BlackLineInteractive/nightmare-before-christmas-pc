@@ -124,7 +124,7 @@ HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32
     D3DPRESENT_PARAMETERS9 p = { 0 };
     p.BackBufferWidth = g_width; p.BackBufferHeight = g_height;
     p.BackBufferFormat = D3DFMT_X8R8G8B8; p.BackBufferCount = 1;
-    p.SwapEffect = D3DSWAPEFFECT_DISCARD; p.hDeviceWindow = g_hwnd; p.Windowed = 1;
+    p.SwapEffect = 3;  /* COPY: the game does not clear every frame; Xbox keeps the buffer */ p.hDeviceWindow = g_hwnd; p.Windowed = 1;
     p.EnableAutoDepthStencil = 1; p.AutoDepthStencilFormat = D3DFMT_D24S8;
     p.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
     HRESULT hr = VCALL(g_d3d, D3D9_CreateDevice, PFN_CreateDevice)(g_d3d, 0, D3DDEVTYPE_HAL, g_hwnd,

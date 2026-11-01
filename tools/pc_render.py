@@ -161,7 +161,7 @@ def compile_renderer():
     os.makedirs(os.path.dirname(OBJ), exist_ok=True)
     nv2a_vsh.emit_c(nv2a_vsh.xbe_reader('rom/extracted/default.xbe'), os.path.join(os.path.dirname(OBJ), 'vshaders.inc'))
     clang = os.environ.get('CLANG', 'clang')
-    subprocess.run([clang, '--target=i686-pc-windows-gnu', '-c', '-O2', '-ffreestanding', '-fno-builtin',
+    subprocess.run([clang, '--target=i686-pc-windows-gnu', '-c', '-O2', '-fno-omit-frame-pointer', '-ffreestanding', '-fno-builtin',
                     '-fno-stack-protector', '-fno-asynchronous-unwind-tables', '-fno-unwind-tables',
                     '-fno-ident', '-mno-stack-arg-probe', '-msse2', '-Wall', '-Wno-unused-function',
                     '-I', os.path.dirname(OBJ), SRC, '-o', OBJ], check=True)

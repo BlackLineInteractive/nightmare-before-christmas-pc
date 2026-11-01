@@ -15,10 +15,12 @@ IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n)
 #define XRS(i)      (((volatile u32*)0x001e2a94)[i])            /* D3D__RenderState */
 #define XTS(s, i)   (((volatile u32*)0x001e2890)[(s) * 32 + (i)]) /* D3D__TextureState */
 
-/* Xbox D3DRENDERSTATETYPE (XDK 5849) */
-enum { XRS_ZFUNC = 57, XRS_ALPHAFUNC, XRS_ALPHABLENDENABLE, XRS_ALPHATESTENABLE, XRS_ALPHAREF,
+/* Xbox D3DRENDERSTATETYPE (XDK 5849). Checked against the game's own code: each
+ * slot is written right before the matching NV2A method (e.g. 0x207 to slot 69
+ * before NV097_SET_STENCIL_FUNC) and against the setters of the complex states. */
+enum { XRS_ZFUNC = 56, XRS_ALPHAFUNC, XRS_ALPHABLENDENABLE, XRS_ALPHATESTENABLE, XRS_ALPHAREF,
        XRS_SRCBLEND, XRS_DESTBLEND, XRS_ZWRITEENABLE, XRS_DITHERENABLE, XRS_SHADEMODE,
-       XRS_COLORWRITEENABLE, XRS_BLENDOP = 74, XRS_FOGENABLE = 92, XRS_LIGHTING = 102,
+       XRS_COLORWRITEENABLE, XRS_BLENDOP = 73, XRS_FOGENABLE = 91, XRS_LIGHTING = 101,
        XRS_FOGCOLOR = 137, XRS_ZENABLE = 142, XRS_STENCILENABLE, XRS_CULLMODE = 146, XRS_TEXTUREFACTOR };
 /* Xbox D3DTEXTURESTAGESTATETYPE */
 enum { XTS_ADDRESSU, XTS_ADDRESSV, XTS_ADDRESSW, XTS_MAGFILTER, XTS_MINFILTER, XTS_MIPFILTER,
@@ -229,7 +231,18 @@ static int g_debug_flat = -1;    /* env PC_FLAT=1: vertex colour only, no blendi
 
 static void apply_state(void)
 {
-    if (g_debug_flat < 0) { char b[4]; g_debug_flat = GetEnvironmentVariableA("PC_FLAT", b, 4) > 0; }
+    if (g_debug_flat < 0) { char b[4]; g_debug_flat = GetEnvironmentVariableA("PC_FLAT", b, 4) > 0 ? b[0] - '0' : 0; }
+    if (g_debug_flat == 2) {      /* texture x vertex colour x 2, alpha blended */
+        rs(RS_ZENABLE, 0); rs(RS_ALPHABLENDENABLE, 1); rs(RS_SRCBLEND, 5); rs(RS_DESTBLEND, 6);
+        rs(RS_ALPHATESTENABLE, 0); rs(RS_CULLMODE, 1); rs(RS_LIGHTING, 0); rs(RS_COLORWRITEENABLE, 15);
+        IUnk* t = g_textures[0] ? get_texture((const u32*)g_textures[0]) : NULL;
+        VCALL(g_dev, DEV_SetTexture, PFN_SetTex)(g_dev, 0, t);
+        tss(0, TSS_COLOROP, t ? 5 : 2); tss(0, TSS_COLORARG1, t ? 2 : 0); tss(0, TSS_COLORARG2, 0);
+        tss(0, TSS_ALPHAOP, t ? 5 : 2); tss(0, TSS_ALPHAARG1, t ? 2 : 0); tss(0, TSS_ALPHAARG2, 0);
+        tss(1, TSS_COLOROP, 1);
+        samp(0, SAMP_MAGFILTER, 2); samp(0, SAMP_MINFILTER, 2);
+        return;
+    }
     if (g_debug_flat) {
         rs(RS_ZENABLE, 0); rs(RS_ALPHABLENDENABLE, 0); rs(RS_ALPHATESTENABLE, 0); rs(RS_CULLMODE, 1);
         rs(RS_LIGHTING, 0); rs(RS_COLORWRITEENABLE, 15);
@@ -429,6 +442,6 @@ static void maybe_screenshot(void)
         for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
     }
     int f12 = (GetAsyncKeyState(0x7B) & 0x8000) != 0;
-    if ((f12 && !f12_was) || (at && g_frames == at)) save_screenshot();
+    if ((f12 && !f12_was) || (at && (g_frames == at || g_frames == at * 3 || g_frames == at * 6))) save_screenshot();
     f12_was = f12;
 }
