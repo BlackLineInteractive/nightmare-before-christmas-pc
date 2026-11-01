@@ -1,4 +1,5 @@
 rom/
+extracted/
 
 .DS_Store
 .env
