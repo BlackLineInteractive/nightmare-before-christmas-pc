@@ -63,14 +63,16 @@ bool StageScene::LoadStage(const std::string& stageDir) {
         }
     }
 
-    // Fallback: load all .pod files found in models/
-    if (modelFileNames.empty() && fs::exists(modelsDir)) {
+    // Also include any other .pod files found in models/
+    if (fs::exists(modelsDir)) {
         for (const auto& entry : fs::directory_iterator(modelsDir)) {
             if (entry.path().extension() == ".pod") {
-                modelFileNames.push_back(entry.path().stem().string());
+                std::string stem = entry.path().stem().string();
+                if (std::find(modelFileNames.begin(), modelFileNames.end(), stem) == modelFileNames.end()) {
+                    modelFileNames.push_back(stem);
+                }
             }
         }
-        std::sort(modelFileNames.begin(), modelFileNames.end());
     }
 
     // 3. Load and upload each model
