@@ -1,5 +1,7 @@
 #include "OogieEngine/Host/OogieHost.h"
 #include "OogieEngine/Host/XboxKernel.h"
+#include "OogieEngine/Host/D3D8Bridge.h"
+#include "OogieEngine/Host/InputBridge.h"
 #include "OogieEngine/Core/VFS.h"
 #include <iostream>
 #include <fstream>
@@ -185,10 +187,12 @@ bool OogieHost::PatchKernelThunks() {
 
 bool OogieHost::PatchHardwareDirect3D() {
     std::cout << "[OogieHost] Patching Direct3D NV2A pushbuffer registers & vtable..." << std::endl;
+    D3D8Bridge::Instance().Initialize();
+    D3D8Bridge::Instance().HookD3DEntryPoints(m_memoryBlock, m_baseAddress);
+
     // Section D3D is at VA 0x001d22c0
     // g_pDevice is stored at VA 0x001e2d28
     // g_pPushBuffer write pointer is at VA 0x001e2d30
-    uintptr_t deviceOffset = 0x001e2d28 - m_baseAddress;
     uintptr_t pushOffset = 0x001e2d30 - m_baseAddress;
 
     if (m_memoryBlock && pushOffset + 8 <= m_memoryBlockSize) {
@@ -204,6 +208,8 @@ bool OogieHost::PatchHardwareDirect3D() {
 
 bool OogieHost::PatchGamepadInput() {
     std::cout << "[OogieHost] Patching XPP Gamepad input..." << std::endl;
+    InputBridge::Instance().Initialize();
+    InputBridge::Instance().HookXPPEntryPoints(m_memoryBlock, m_baseAddress);
     std::cout << "[OogieHost] Keyboard and modern gamepads mapped to Xbox controller slots 0..3." << std::endl;
     return true;
 }

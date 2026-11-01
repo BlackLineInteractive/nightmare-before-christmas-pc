@@ -46,6 +46,8 @@ set(ENGINE_SOURCES
     src/UI/Panels/DialoguePanel.cpp
     src/Viewer/ViewerApp.cpp
     src/Host/XboxKernelThunks.cpp
+    src/Host/D3D8Bridge.cpp
+    src/Host/InputBridge.cpp
     src/Host/OogieHost.cpp
     src/main.cpp
 )
@@ -59,12 +61,18 @@ add_executable(oogie_port
     src/Core/VFS.cpp
     src/Loader/CapcomLZ.cpp
     src/Host/XboxKernelThunks.cpp
+    src/Host/D3D8Bridge.cpp
+    src/Host/InputBridge.cpp
     src/Host/OogieHost.cpp
     src/Host/main_host.cpp
 )
 
 target_link_libraries(oogie_port PRIVATE
+    ${RAYLIB_LIBRARIES}
     "-framework OpenGL"
+    "-framework Cocoa"
+    "-framework IOKit"
+    "-framework CoreVideo"
 )
 
 target_link_libraries(oogie_viewer PRIVATE
