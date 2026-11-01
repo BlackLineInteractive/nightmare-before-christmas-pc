@@ -45,12 +45,26 @@ set(ENGINE_SOURCES
     src/UI/Panels/TextureGalleryPanel.cpp
     src/UI/Panels/DialoguePanel.cpp
     src/Viewer/ViewerApp.cpp
+    src/Host/XboxKernelThunks.cpp
+    src/Host/OogieHost.cpp
     src/main.cpp
 )
 
 add_executable(oogie_viewer
     ${ENGINE_SOURCES}
     ${IMGUI_SOURCES}
+)
+
+add_executable(oogie_port
+    src/Core/VFS.cpp
+    src/Loader/CapcomLZ.cpp
+    src/Host/XboxKernelThunks.cpp
+    src/Host/OogieHost.cpp
+    src/Host/main_host.cpp
+)
+
+target_link_libraries(oogie_port PRIVATE
+    "-framework OpenGL"
 )
 
 target_link_libraries(oogie_viewer PRIVATE
