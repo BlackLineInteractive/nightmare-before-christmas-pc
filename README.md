@@ -7,6 +7,10 @@
 [![Graphics](https://img.shields.io/badge/Renderer-OpenGL%203.3%20%2F%20Raylib-orange.svg)]()
 [![UI](https://img.shields.io/badge/GUI-Dear%20ImGui-purple.svg)](https://github.com/ocornut/imgui)
 
+<p align="center">
+  <img src="media/cover.webp" alt="The Nightmare Before Christmas: Oogie's Revenge" width="320">
+</p>
+
 **OogieEngine** is a modern, high-performance reverse-engineering toolkit and native game engine recreation for Capcom's 2004–2005 classic: ***Tim Burton's The Nightmare Before Christmas: Oogie's Revenge*** (Original Xbox / PS2).
 
 Inspired by modern engine reconstruction projects such as [*OpenGOAL*](https://github.com/open-goal/jak-project), [*OpenLara*](https://github.com/XProger/OpenLara), and [*Climax Game Engine Toolkit*](https://github.com/BlackLineInteractive/Climax_Game_Engine_Toolkit), this project extracts, decodes, and renders the game's proprietary **Capcom RD3 Engine** formats at high framerates with customizable shaders, a comprehensive Dear ImGui debugging suite, and a roadmap toward a full playable PC port.

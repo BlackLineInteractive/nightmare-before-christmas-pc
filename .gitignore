@@ -8,5 +8,4 @@ __pycache__/
 .env
 imgui.ini
 external/*
-
-*.*
+!media/*
