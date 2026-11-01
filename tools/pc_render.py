@@ -100,7 +100,39 @@ MEM_TO_PC = {
     0x1bff34: ('_pc_XMemFree@8', 'XMemFree'),
 }
 
-PC_TABLE = {**D3D_TO_PC, **XPP_TO_PC, **MEM_TO_PC}
+# XACT / DirectSound -> src/PC/audio.c (silent for now)
+AUDIO_TO_PC = {
+    0x22470e: ('_pc_XACTEngineCreate@8', 'XACTEngineCreate'),
+    0x2246dc: ('_pc_XACTEngineDoWork@0', 'XACTEngineDoWork'),
+    0x222ade: ('_pc_XACT_CreateSoundSource@12', 'IXACTEngine_CreateSoundSource'),
+    0x222b1d: ('_pc_XACT_CreateSoundBank@16', 'IXACTEngine_CreateSoundBank'),
+    0x222b60: ('_pc_XACT_RegisterWaveBank@16', 'IXACTEngine_RegisterWaveBank'),
+    0x222ba3: ('_pc_XACT_RegisterStreamedWaveBank@12', 'IXACTEngine_RegisterStreamedWaveBank'),
+    0x222be2: ('_pc_XACT_Nop2@8', 'IXACTEngine_UnRegisterWaveBank'),
+    0x222c1d: ('_pc_XACT_Nop3@12', 'IXACTEngine (3 args)'),
+    0x222c3d: ('_pc_XACT_Nop2@8', 'IXACTEngine_RegisterNotification'),
+    0x222c78: ('_pc_XACT_Nop2@8', 'IXACTEngine_UnRegisterNotification'),
+    0x222cb3: ('_pc_XACT_GetNotification@12', 'IXACTEngine_GetNotification'),
+    0x222cf2: ('_pc_XACT_Nop2@8', 'IXACTEngine_FlushNotification'),
+    0x222d2d: ('_pc_XACT_Out2@8', 'IXACTEngine (engine, out)'),
+    0x222d65: ('_pc_XACT_Nop2@8', 'IXACTEngine (2 args)'),
+    0x222da2: ('_pc_XACT_Nop1@4', 'IXACT object Release'),
+    0x222dcd: ('_pc_XACT_GetCueIndex@12', 'IXACTSoundBank_GetSoundCueIndexFromFriendlyName'),
+    0x222e00: ('_pc_XACT_Nop3@12', 'IXACTSoundBank (3 args)'),
+    0x222e33: ('_pc_XACT_Nop3@12', 'IXACTSoundBank_PlayEx'),
+    0x222e66: ('_pc_XACT_Nop4@16', 'IXACTSoundBank (4 args)'),
+    0x222e9d: ('_pc_XACT_Nop3@12', 'IXACTSoundBank (3 args)'),
+    0x222ed0: ('_pc_XACT_Nop1@4', 'IDirectSoundStream (1 arg)'),
+    0x222ed5: ('_pc_XACT_Nop5@20', 'IDirectSoundStream_SetPosition/SetVelocity'),
+    0x222efe: ('_pc_XACT_Nop2@8', 'IDirectSoundStream (2 args)'),
+    0x222f03: ('_pc_XACT_Nop2@8', 'IDirectSoundStream (2 args)'),
+    0x222f08: ('_pc_XACT_Nop1@4', 'IDirectSoundStream (1 arg)'),
+    0x222f0d: ('_pc_XACT_Out2@8', 'IDirectSoundStream_GetStatus'),
+    0x204492: ('_pc_DirectSoundUseLightHRTF4Channel@0', 'DirectSoundUseLightHRTF4Channel'),
+    0x205ece: ('_pc_XAudioDownloadEffectsImage@16', 'XAudioDownloadEffectsImage'),
+}
+
+PC_TABLE = {**D3D_TO_PC, **XPP_TO_PC, **MEM_TO_PC, **AUDIO_TO_PC}
 
 # DLL of each Windows function the renderer imports (anything else: kernel32)
 DLL_OF = {

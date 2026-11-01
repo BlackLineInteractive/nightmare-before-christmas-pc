@@ -497,6 +497,7 @@ def build_port_section(image_mem, base, sec_rva, kernel_names, renderer=None):
             raise SystemExit(f'[!] fs patch {pat.hex()}: expected {expected} sites, found {len(hits)}')
         for h in hits:
             image_mem[h:h + len(rep)] = rep
+    n_cs = convert_static_critical_sections(image_mem, base)
     n_kpcr = 0
     for pat in KPCR_PATTERNS:
         for h in find_all(image_mem, pat):
@@ -517,9 +518,29 @@ def build_port_section(image_mem, base, sec_rva, kernel_names, renderer=None):
     info = dict(import_dir=import_dir, iat_dir=iat_dir, entry_rva=entry - base,
                 tls_dir=(TLS_DIRECTORY_VA - base, 0x18),
                 stats=dict(xapi=len(XAPI_TO_WIN32), stubs=len(XAPI_TO_STUB), bound=n_bound,
-                           traps=n_trap, data=n_data, paths=n_paths, kpcr=n_kpcr,
+                           traps=n_trap, data=n_data, paths=n_paths, kpcr=n_kpcr, cs=n_cs,
                            d3d=len(table) if renderer else 0))
     return bytes(sec), info
+
+
+def convert_static_critical_sections(image_mem, base):
+    """Rewrite statically initialised Xbox RTL_CRITICAL_SECTIONs to the Windows layout.
+
+    Xbox: {KEVENT header (Type=1, Size=4, SignalState, WaitList self-links), LockCount=-1,
+    RecursionCount, OwningThread}, 0x1C bytes. Windows reads LockCount at +4 (here
+    SignalState = 0, i.e. "held") and deadlocks. Windows layout (0x18 bytes):
+    DebugInfo, LockCount=-1, RecursionCount, OwningThread, LockSemaphore, SpinCount.
+    """
+    n = 0
+    pos = image_mem.find(b'\x01\x00\x04\x00\x00\x00\x00\x00')
+    while pos != -1:
+        va = base + pos
+        flink, blink, lock = struct.unpack_from('<IIi', image_mem, pos + 8)
+        if flink == blink == va + 8 and lock == -1:
+            image_mem[pos:pos + 0x1C] = struct.pack('<Ii5I', 0, -1, 0, 0, 0, 0, 0)
+            n += 1
+        pos = image_mem.find(b'\x01\x00\x04\x00\x00\x00\x00\x00', pos + 1)
+    return n
 
 
 def base_name(name):

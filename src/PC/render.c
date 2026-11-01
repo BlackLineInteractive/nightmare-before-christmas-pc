@@ -64,6 +64,10 @@ static IUnk*  g_dev;
 static HWND   g_hwnd;
 static u32    g_width = 640, g_height = 480;
 static u32    g_frames;
+static u32    g_stat_draw_up, g_stat_draw, g_stat_tex, g_stat_clear, g_stat_skipped;
+static void   tex_invalidate(const void* res);
+static void   default_xbox_state(void);
+static void   maybe_screenshot(void);
 static XRes   g_backbuffer, g_depth;
 static XRes*  g_textures[4];
 static float  g_transforms[16][16];
@@ -144,12 +148,14 @@ HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32
     XBOX_D3D_g_pDevice = XBOX_D3D_DEVICE;
     if (ppDevice) *ppDevice = XBOX_D3D_DEVICE;
     g_viewport[2] = g_width; g_viewport[3] = g_height; ((float*)g_viewport)[5] = 1.0f;
+    default_xbox_state();
     return 0;
 }
 
 /* Clear(Count, pRects, Flags, Color, Z, Stencil) — Xbox flags: Z=1, STENCIL=2, TARGET=0xF0 */
 HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, float z, u32 stencil)
 {
+    g_stat_clear++;
     if (!g_dev) return 0;
     u32 f = 0;
     if (flags & 0xF0) f |= D3DCLEAR_TARGET;
@@ -162,12 +168,20 @@ HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, floa
 u32 WINAPI pc_Swap(u32 flags)
 {
     if (g_dev) {
+        maybe_screenshot();
         VCALL(g_dev, DEV_EndScene, PFN_Scene)(g_dev);
         VCALL(g_dev, DEV_Present, PFN_Present)(g_dev, NULL, NULL, NULL, NULL);
         VCALL(g_dev, DEV_BeginScene, PFN_Scene)(g_dev);
     }
     pump();
-    if ((++g_frames & 63) == 1) log_hex("[pc] frame", g_frames);
+    if ((++g_frames & 63) == 1) {
+        log_hex("[pc] frame", g_frames);
+        log_hex("[pc]   DrawVerticesUP", g_stat_draw_up);
+        log_hex("[pc]   DrawVertices", g_stat_draw);
+        log_hex("[pc]   textures", g_stat_tex);
+        log_hex("[pc]   clears", g_stat_clear);
+        log_hex("[pc]   skipped (vertex shader)", g_stat_skipped);
+    }
     return 0;
 }
 
@@ -177,6 +191,7 @@ u32 WINAPI pc_Swap(u32 flags)
 XRes* WINAPI pc_CreateTexture2(u32 w, u32 h, u32 depth, u32 levels, u32 usage, u32 fmt, u32 rtype)
 {
     XRes* t = new_res(XCOMMON_TYPE_TEXTURE);
+    g_stat_tex++;
     if (!levels) { levels = 1; for (u32 m = w > h ? w : h; m > 1; m >>= 1) levels++; }
     t->width = w; t->height = h; t->levels = levels; t->xfmt = fmt;
     u32 total = 0;
@@ -205,6 +220,7 @@ HRESULT WINAPI pc_LockRect(XRes* t, u32 level, D3DLOCKED_RECT* lr, const RECT* r
 {
     u32 w, h;
     u8* p = level_ptr(t, level, &w, &h);
+    tex_invalidate(t);
     lr->pBits = p;
     lr->Pitch = xfmt_dxt(t->xfmt) ? ((w + 3) / 4) * (t->xfmt == 0x0C ? 8 : 16) : w * xfmt_bpp(t->xfmt) / 8;
     return 0;
@@ -300,8 +316,9 @@ HRESULT WINAPI pc_CreateVertexShader(const u32* decl, const u32* fn, u32* handle
 HRESULT WINAPI pc_SetVertexShader(u32 handle) { g_vshader = handle; return 0; }
 HRESULT WINAPI pc_GetVertexShader(u32* handle) { *handle = g_vshader; return 0; }
 HRESULT WINAPI pc_GetVertexShaderSize(u32 handle, u32* size) { *size = 0; return 0; }
-HRESULT WINAPI pc_LoadVertexShader(u32 handle, u32 addr) { return 0; }
-HRESULT WINAPI pc_SelectVertexShader(u32 handle, u32 addr) { return 0; }
+/* The game picks its programmable vertex shaders with Load/SelectVertexShader */
+HRESULT WINAPI pc_LoadVertexShader(u32 handle, u32 addr) { g_vshader = handle; return 0; }
+HRESULT WINAPI pc_SelectVertexShader(u32 handle, u32 addr) { g_vshader = handle; return 0; }
 HRESULT WINAPI pc_SetShaderConstantMode(u32 mode) { return 0; }
 void FASTCALL pc_SetVertexShaderConstant_2(u32 reg, const void* data) { }
 void FASTCALL pc_SetVertexShaderConstantNotInline(u32 reg, const void* data, u32 count) { }
@@ -314,8 +331,7 @@ HRESULT WINAPI pc_SetPixelShaderProgram(const void* def) { return 0; }
 
 static XRes* g_stream0; static u32 g_stride0;
 HRESULT WINAPI pc_SetStreamSource(u32 n, XRes* vb, u32 stride) { if (!n) { g_stream0 = vb; g_stride0 = stride; } return 0; }
-void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride) { }
-void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count) { }
+/* pc_DrawVerticesUP / pc_DrawVertices: draw.c */
 
 /* ------------------------------------------------------------------ misc */
 

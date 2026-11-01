@@ -54,6 +54,7 @@ IMPORT s32  WINAPI DefWindowProcA(HWND h, u32 msg, u32 wp, s32 lp);
 IMPORT void WINAPI PostQuitMessage(int code);
 IMPORT BOOL WINAPI AdjustWindowRect(RECT* r, u32 style, BOOL menu);
 IMPORT void* WINAPI LoadCursorA(HINSTANCE inst, const char* name);
+IMPORT u16  WINAPI GetAsyncKeyState(int vk);
 
 #define WS_OVERLAPPEDWINDOW 0x00CF0000
 #define WS_VISIBLE          0x10000000

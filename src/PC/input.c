@@ -10,7 +10,6 @@
 #include "win32.h"
 
 IMPORT u32 WINAPI XInputGetState(u32 index, void* state);    /* xinput9_1_0.dll */
-IMPORT u16 WINAPI GetAsyncKeyState(int vk);                   /* user32.dll */
 
 /* Xbox XINPUT_GAMEPAD */
 typedef struct {

@@ -5,4 +5,6 @@
 #include "rt.c"
 #include "memory.c"
 #include "render.c"
+#include "draw.c"
 #include "input.c"
+#include "audio.c"
