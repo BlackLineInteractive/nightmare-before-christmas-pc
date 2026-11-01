@@ -114,12 +114,12 @@ void DialoguePanel::Draw(bool* pOpen, const std::string& currentStagePath) {
 
             ImGui::PushID(static_cast<int>(i));
 
-            ImGui::BeginChildFrame(ImGui::GetID("frame"), ImVec2(0, 0), ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::BeginChild("msg_frame", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
             ImGui::TextColored(ImVec4(0.95f, 0.70f, 0.20f, 1.0f), "Message #%zu:", i + 1);
             ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 25.0f);
             ImGui::TextUnformatted(msg.c_str());
             ImGui::PopTextWrapPos();
-            ImGui::EndChildFrame();
+            ImGui::EndChild();
 
             ImGui::Spacing();
             ImGui::PopID();
