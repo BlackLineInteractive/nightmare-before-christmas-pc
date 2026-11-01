@@ -161,3 +161,4 @@ int32_t D3D8Bridge::DrawIndexedVertices(uint32_t PrimitiveType, uint32_t VertexC
 
 } // namespace Host
 } // namespace OogieEngine
+
