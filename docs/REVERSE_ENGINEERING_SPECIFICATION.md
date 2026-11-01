@@ -87,6 +87,73 @@ The binary defines Jack Skellington's core player state machine via discrete act
   - `jack2` / `jack/sntprs`: Santa Jack (Ice / Freezing present delivery weapons).
 - **Enemy Subsystems:** `enemy0/skltroll` (Skeleton Troll), `enemy0/kngghost` (King Ghost), `enemy0/sklorc` (Skeleton Orc), `enemy0/trick`, `enemy0/treat` (Halloween Trick-or-Treaters).
 
+### 2.5 Xbox Dependency Map
+
+#### Header facts
+- **Entry point:** stored XOR `0xA8FC57AB` (retail key) → `0x001BF647` (`mainXapiStartup`), which creates the main thread at `0x001BF5D3`.
+- **Kernel thunk table:** XOR `0x5B6D40B6` → `0x00260020`, 125 ordinals of `xboxkrnl.exe`.
+- **Certificate:** `0x00010184`, **section headers:** `0x00010370`, **TLS directory:** `0x0027C600`.
+- **Title ID:** `0x42560004`, region PAL.
+
+#### Section layout
+
+| Section | VA range | Contents |
+| :--- | :--- | :--- |
+| `.text` | `0x012000`–`0x1D22A8` | Capcom RD3 game code (`0x012000`–`0x1A0000`), then XAPI + LIBC |
+| `D3D` | `0x1D22C0`–`0x1E5228` | Direct3D 8 (NV2A push-buffer driver) |
+| `D3DX` | `0x1E5240`–`0x202098` | D3DX helpers |
+| `XGRPH` | `0x2020A0`–`0x204194` | XGraphics (swizzle, etc.) |
+| `DSOUND` | `0x2041A0`–`0x222AB4` | DirectSound (MCPX APU driver) |
+| `XACTENG` | `0x222AC0`–`0x22D5D0` | XACT audio engine |
+| `BINK*` | `0x22D5E0`–`0x23F5EC` | Bink video codec + blitters |
+| `WMADEC` | `0x23F600`–`0x25867C` | WMA decoder |
+| `XPP` | `0x258680`–`0x26001C` | Xbox Peripheral Port (USB gamepad) |
+| `.rdata` | `0x260020`–`0x280A74` | kernel thunks, constants, strings |
+| `.data` | `0x280A80`–`0x41847C` | globals |
+| `DOLBY`, `BINKDATA` | `0x418480`–`0x42CB60` | DSP / codec data |
+
+#### Linked XDK libraries
+All at build **5849**: `XAPILIB`, `D3D8`, `D3DX8`, `XGRAPHC`, `DSOUND`, `XACTENG`, `XBOXKRNL`, `LIBCMT`, `LIBCPMT`.
+
+`tools/xbsymscan.py` matches these against XbSymbolDatabase signatures and finds 361 functions. Key ones:
+
+| Address | Symbol |
+| :--- | :--- |
+| `0x001D8EE0` | `Direct3D_CreateDevice` (device object is static at `0x001E2D30`, size `0x24A0`; `D3D_g_pDevice` at `0x001E2D28`) |
+| `0x001D7610` | `D3DDevice_Clear` |
+| `0x001D7460` | `D3DDevice_Swap` |
+| `0x001D6370` | `D3DDevice_DrawVertices` |
+| `0x001D2E00` | `D3DDevice_SetStreamSource` |
+| `0x001D82C0` | `D3DDevice_MakeSpace` |
+| `0x002076AA` | `DirectSoundCreate` |
+| `0x0025986B` | `XInputOpen` |
+| `0x00259AA5` | `XInputGetState` |
+
+#### Who calls the Xbox kernel
+
+| Caller | Kernel call sites | Distinct kernel functions |
+| :--- | ---: | ---: |
+| `.text` — only in XAPI/LIBC (`0x1A0000`+) | 320 | 90 |
+| `DSOUND` | 186 | 29 |
+| `XPP` | 160 | 36 |
+| `XACTENG` | 140 | 12 |
+| `D3D` | 37 | 24 |
+| `WMADEC` | 13 | 3 |
+
+**The Capcom game code (`0x012000`–`0x1A0000`) has no direct kernel calls.** It talks only to XAPI (a Win32 subset: `CreateFileA`, `ReadFile`, `CreateThread`, `Sleep`, …), LIBC, and the D3D / DSound / XACT / XPP libraries.
+
+#### KPCR (`fs:`) accesses
+Xbox code reads the kernel processor control region through `fs:`: `fs:[0x20]` Prcb (10 sites), `fs:[0x28]` CurrentThread (9), `fs:[0x58]` DpcRoutineActive (2), `fs:[0x04]` StackBase for TLS (6), `movzx fs:[0x24]` Irql (12). TLS: `[StackBase + idx*4]`, index stored at `0x003F2E5C`.
+
+#### NV2A register access inside D3D
+D3D drives the GPU directly at `0xFD000000`; on PC these addresses are plain memory, so the driver hangs or recurses:
+- `0x001D7E70`: waits for the write-combine flush (`NV_PFB 0x100410`).
+- `0x001DA690`: waits for PFIFO DMA `GET == PUT` (user channel `0xFD800040/44`).
+- `0x001DBED0`: GPU interrupt handler; reads `NV_PGRAPH_INTR` (`0xFD400100`), which on hardware is cleared by writing it. On plain memory the bit never clears, so `0x001DFADD` ↔ `0x001DBED0` recurse until the stack overflows (`0x001DFAE2`).
+- Commands are written to a push buffer: `D3D_g_pDevice+0` = put pointer, `+4` = threshold; `0x001D82D0` reserves space and `0x001D8180` kicks/waits on the GPU when it runs out.
+
+Patching these registers one by one is a dead end; the D3D library as a whole is to be replaced.
+
 ---
 
 ## 3. Data Storage & Compression Algorithms
@@ -315,6 +382,14 @@ Skeletons       Collision       Soul Robber     Encounters       Cutscenes
 • PMT Player    • Raycast floor • Combos        • Skeleton AI    • Dialogue
 • Jack Model    • Wall sliding  • Form shifts   • Boss logic     • Subtitles
 ```
+
+### Phase 0: Binary Port of `default.xbe`
+Run the original game code on PC by patching the executable (no emulation, no recompilation). See §2.5 for the addresses.
+1. **Flat PE** (`tools/build_flat_pe.py`, done): XBE mapped 1:1 at `0x00010000`, NV2A init/waits stripped, entry jumps to the main thread routine.
+2. **XAPI → Windows:** each XAPI function becomes a jump into the same function of `kernel32.dll`; `D:\` paths point at the game folder; XAPI start-up is skipped. With this the Xbox kernel is not needed at all.
+3. **Renderer:** replace the D3D8 entry points (`Direct3D_CreateDevice`, `Clear`, `Swap`, draw/state functions) with our own renderer; first milestone is a presented frame.
+4. **Input:** replace `XInputOpen` / `XInputGetState` (XPP) with PC gamepad/keyboard.
+5. **Audio:** replace DirectSound / XACT / WMA with our own mixer reading the original `.xwb` / `.xsb` banks.
 
 ### Phase 1: Jack Skellington Skeletal Animation System
 - Implement `BmdLoader`: Parse joint hierarchy, bind matrices, and vertex weights from `chja2.bmd`.

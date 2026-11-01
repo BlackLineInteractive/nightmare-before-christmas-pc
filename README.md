@@ -50,7 +50,8 @@ Topics covered:
 3. **Model Formats:** `P2OD` (static stages), `BMD` (skinned skeletal characters), and `PMT` (134 skeletal animation files).
 4. **Material Grammar:** Semantic flags in `scene/bg_list.txt` (`ADD100`, `GLARE`, `ADDZERO_64`, `ALPHA`, `Z_OFF`, `TEX_SCROLL`).
 5. **Collision & Audio:** `BGatari.amd` environment collision, `CAMatari.amd` camera obstruction, and Microsoft XACT audio banks (`.xwb` / `.xsb`).
-6. **Native PC Port Roadmap:** Phased development plan to achieve a fully playable standalone game.
+6. **Xbox Dependency Map:** Section layout, XDK 5849 libraries, where the Xbox kernel is called from, NV2A register access in D3D.
+7. **Native PC Port Roadmap:** Binary port of `default.xbe` plus the phased reimplementation plan.
 
 ---
 
@@ -86,24 +87,51 @@ cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 ---
 
-## Native PC Executable Patching (Hardware Dependency Stripper)
+## Native PC Executable (Binary Port of `default.xbe`)
 
-To convert the original Xbox `default.xbe` / `default.exe` into a native, standalone Windows PE executable stripped of all console hardware dependencies:
+Goal: run the **original game code** on PC by patching the executable itself — no emulator, no HLE layer, no recompilation. Game logic stays byte-for-byte original, the game reads its original files through its original file system, and the Xbox-only libraries (graphics, sound, input) are replaced with our own.
+
+### Generate the flat PE
 
 ```bash
-# Run binary patcher
-python3 tools/patch_exe.py
+python3 tools/build_flat_pe.py
 ```
 
-### What this accomplishes directly on the binary:
-1. **NV2A GPU Spinlock Neutralization (`0x001dc611`):** Overwrites the hardware register wait loop (`D3D_WaitGPUReady`) with `xor eax, eax; ret`, preventing hangs on systems without NV2A silicon.
-2. **NV2A MMIO Hardware Init Stripping (`0x001dc2d1`):** Removes hardcoded writes to physical address `0xFD000000` (NV2A PCI/PGRAPH registers) and chip ID reads.
-3. **Interrupt Status Register Stripping (`0xFD40014C`):** Replaces hardware register polling at `0x001dbc1d`, `0x001dbe5f`, and `0x001dc00f` with zeroed registers.
-4. **XPP USB Controller Hardware Patching (`0x0025c41f`):** NOPs hardware MMIO writes.
-5. **Standard Windows PE Import Table (`.idata`):** Constructs a full PE Import Directory connecting all 125 Xbox kernel ordinals at VA `0x00260020` directly to `xboxkrnl.dll`.
-6. **Outputs:**
-   - `rom/extracted/default_pc.exe` & `rom/extracted/OogiesRevenge_PC.exe` (Standalone Windows executables).
-   - `rom/extracted/xboxkrnl.dll` (Standard Win32 ordinal thunk library).
+Produces `rom/extracted/default_pc.exe`: the XBE mapped 1:1 at its native base `0x00010000` as a single PE section, so every absolute address in the game code stays valid. Patches applied on the image:
+
+1. **NV2A spin-wait (`0x001dc611`):** `D3D_WaitGPUReady` → `xor eax, eax; ret`.
+2. **NV2A device init (`0x001dc2d1`):** stripped.
+3. **NV2A chip detection (`0x001dc2fc`):** returns a fixed chip ID.
+4. **PMC interrupt status reads (`0xFD40014C`)** at `0x001dbc1d`, `0x001dbe5f`, `0x001dc00f`: zeroed.
+5. **XPP USB MMIO write (`0x0025c41f`):** NOPed.
+6. **KPCR accesses (`fs:[0x20]`, `fs:[0x28]`):** redirected to a dummy block.
+7. **Boot:** XBE entry (`0x001bf647`) jumps straight to the RD3 main thread routine (`0x001bf5d3`).
+
+> **Status:** the PE still imports the 125 Xbox kernel ordinals (`xboxkrnl.dll`), which does not exist on Windows, so the exe does **not** start yet. See *Porting route* below.
+
+### Locate Xbox SDK library functions
+
+```bash
+git clone --depth 1 https://github.com/Cxbx-Reloaded/XbSymbolDatabase.git /path/to/XbSymbolDatabase
+python3 tools/xbsymscan.py /path/to/XbSymbolDatabase/src/OOVPADatabase rom/extracted/default.xbe syms.txt
+```
+
+Reads the XbSymbolDatabase signature tables as data (nothing is compiled) and prints the address, calling convention and parameter count of each XDK function found in `default.xbe`. On this build (XDK 5849) it locates **361** symbols, e.g. `Direct3D_CreateDevice` `0x001d8ee0`, `D3DDevice_Clear` `0x001d7610`, `D3DDevice_Swap` `0x001d7460`, `DirectSoundCreate` `0x002076aa`, `XInputGetState` `0x00259aa5`.
+
+### Porting route
+
+Static analysis shows **the game code itself (`0x12000`–`0x1A0000`) never calls the Xbox kernel**. All 125 kernel imports are used only by statically linked Microsoft libraries:
+
+| Library | Location | Kernel call sites | Replacement |
+| :--- | :--- | ---: | :--- |
+| XAPI + LIBC | `.text` `0x1A0000`–`0x1D22A8` | 320 | XAPI is a Win32 subset → jump to the same function in Windows `kernel32.dll` |
+| D3D8 | `D3D` | 37 | own renderer |
+| DirectSound | `DSOUND` | 186 | own audio |
+| XACT | `XACTENG` | 140 | own audio |
+| XPP (gamepad) | `XPP` | 160 | own input |
+| WMA decoder | `WMADEC` | 13 | own audio |
+
+So the Xbox kernel can be dropped entirely: XAPI functions become direct jumps into Windows, `D:\` paths are pointed at the game folder, XAPI start-up (`XapiInitProcess`, partition checks, cache drive) is skipped, and D3D / DSound / XACT / XPP are swapped for our renderer, audio and input.
 
 ---
 
@@ -141,7 +169,9 @@ python3 tools/patch_exe.py
 │   └── structured_data/     # Structured Stages (0000..0c00) with Catalog
 └── tools/
     ├── capcom_tool.py       # Bitstream LZ & @STM Extraction Utility
-    └── structure_stm.py     # Stage Structuring & Catalog Generation Tool
+    ├── structure_stm.py     # Stage Structuring & Catalog Generation Tool
+    ├── build_flat_pe.py     # default.xbe -> flat 1:1 PE + hardware patches
+    └── xbsymscan.py         # Locate XDK library functions via XbSymbolDatabase
 ```
 
 ---
