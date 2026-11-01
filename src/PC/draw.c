@@ -10,6 +10,8 @@
  */
 #include "win32.h"
 
+IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n);
+
 #define XRS(i)      (((volatile u32*)0x001e2a94)[i])            /* D3D__RenderState */
 #define XTS(s, i)   (((volatile u32*)0x001e2890)[(s) * 32 + (i)]) /* D3D__TextureState */
 
@@ -35,7 +37,6 @@ enum { SAMP_ADDRESSU = 1, SAMP_ADDRESSV, SAMP_ADDRESSW, SAMP_BORDERCOLOR, SAMP_M
 typedef HRESULT (WINAPI *PFN_SetRS)(IUnk*, u32, u32);
 typedef HRESULT (WINAPI *PFN_SetTSS)(IUnk*, u32, u32, u32);
 typedef HRESULT (WINAPI *PFN_SetTex)(IUnk*, u32, IUnk*);
-typedef HRESULT (WINAPI *PFN_SetFVF)(IUnk*, u32);
 typedef HRESULT (WINAPI *PFN_SetXf)(IUnk*, u32, const float*);
 typedef HRESULT (WINAPI *PFN_DrawUP)(IUnk*, u32, u32, const void*, u32);
 typedef HRESULT (WINAPI *PFN_DrawIdxUP)(IUnk*, u32, u32, u32, u32, const void*, u32, const void*, u32);
@@ -224,8 +225,18 @@ static void default_xbox_state(void)
 
 /* ------------------------------------------------------------ apply state */
 
+static int g_debug_flat = -1;    /* env PC_FLAT=1: vertex colour only, no blending / depth */
+
 static void apply_state(void)
 {
+    if (g_debug_flat < 0) { char b[4]; g_debug_flat = GetEnvironmentVariableA("PC_FLAT", b, 4) > 0; }
+    if (g_debug_flat) {
+        rs(RS_ZENABLE, 0); rs(RS_ALPHABLENDENABLE, 0); rs(RS_ALPHATESTENABLE, 0); rs(RS_CULLMODE, 1);
+        rs(RS_LIGHTING, 0); rs(RS_COLORWRITEENABLE, 15);
+        tss(0, TSS_COLOROP, 2); tss(0, TSS_COLORARG1, 0); tss(0, TSS_ALPHAOP, 2); tss(0, TSS_ALPHAARG1, 0);
+        tss(1, TSS_COLOROP, 1);
+        return;
+    }
     rs(RS_ZENABLE, XRS(XRS_ZENABLE) ? 1 : 0);
     rs(RS_ZFUNC, map_cmp(XRS(XRS_ZFUNC)));
     rs(RS_ZWRITEENABLE, XRS(XRS_ZWRITEENABLE) ? 1 : 0);
@@ -277,59 +288,103 @@ static void apply_state(void)
 
 /* ------------------------------------------------------------------- draw */
 
-/* Xbox primitive types: 1 points, 2 lines, 3 line loop, 4 line strip,
- * 5 triangles, 6 strip, 7 fan, 8 quads, 9 quad strip, 10 polygon */
-static void draw(u32 prim, u32 count, const u8* v, u32 stride)
-{
-    if (!g_dev || !v || !count) return;
-    if (g_vshader & 1) { g_stat_skipped++; return; }    /* programmable vertex shader: later */
-    VCALL(g_dev, DEV_SetFVF, PFN_SetFVF)(g_dev, g_vshader);
-    apply_state();
+typedef HRESULT (WINAPI *PFN_CreateVB)(IUnk*, u32, u32, u32, u32, IUnk**, void*);
+typedef HRESULT (WINAPI *PFN_VBLock)(IUnk*, u32, u32, void**, u32);
+typedef HRESULT (WINAPI *PFN_VBUnlock)(IUnk*);
+typedef HRESULT (WINAPI *PFN_SetStream)(IUnk*, u32, IUnk*, u32, u32);
+typedef HRESULT (WINAPI *PFN_DrawPrim)(IUnk*, u32, u32, u32);
+#define DEV_CreateVertexBuffer 26
+#define DEV_DrawPrimitive      81
+#define DEV_SetStreamSource   100
 
-    PFN_DrawUP up = VCALL(g_dev, DEV_DrawPrimitiveUP, PFN_DrawUP);
+static IUnk* g_vb9[16];
+static u32   g_vb9_size[16];
+
+/* Xbox primitive -> D3D9 type and primitive count; quads come pre-expanded */
+static u32 prim9(u32 prim, u32 count, u32* n)
+{
     switch (prim) {
-    case 1: up(g_dev, 1, count, v, stride); break;
-    case 2: up(g_dev, 2, count / 2, v, stride); break;
-    case 3: case 4: up(g_dev, 3, count - 1, v, stride); break;
-    case 5: up(g_dev, 4, count / 3, v, stride); break;
-    case 6: case 9: up(g_dev, 5, count - 2, v, stride); break;
-    case 7: case 10: up(g_dev, 6, count - 2, v, stride); break;
-    case 8: {                                            /* quads -> indexed triangles */
-        static u16 idx[6 * 4096];
-        u32 quads = count / 4;
-        if (quads > 4096) quads = 4096;
-        for (u32 q = 0; q < quads; q++) {
-            u16 b = (u16)(q * 4);
-            idx[q * 6 + 0] = b; idx[q * 6 + 1] = b + 1; idx[q * 6 + 2] = b + 2;
-            idx[q * 6 + 3] = b; idx[q * 6 + 4] = b + 2; idx[q * 6 + 5] = b + 3;
+    case 1: *n = count; return 1;
+    case 2: *n = count / 2; return 2;
+    case 3: case 4: *n = count - 1; return 3;
+    case 5: case 8: *n = count / 3; return 4;
+    case 6: case 9: *n = count - 2; return 5;
+    default: *n = count - 2; return 6;          /* fan, polygon */
+    }
+}
+
+static u16 g_quad_idx[6 * 4096];
+static u32 quad_indices(u32 count)            /* -> index count */
+{
+    u32 quads = count / 4;
+    if (quads > 4096) quads = 4096;
+    for (u32 q = 0; q < quads; q++) {
+        u16 b = (u16)(q * 4);
+        u16* d = g_quad_idx + q * 6;
+        d[0] = b; d[1] = b + 1; d[2] = b + 2; d[3] = b; d[4] = b + 2; d[5] = b + 3;
+    }
+    return quads * 6;
+}
+
+/* Vertices from Xbox memory (stream data), one D3D9 dynamic buffer per stream. */
+static void draw_streams(u32 prim, u32 start, u32 count)
+{
+    u32 nidx = prim == 8 ? quad_indices(count) : 0;
+    u32 verts = nidx ? nidx : count;
+    for (u32 s = 0; s < 16; s++) {
+        if (!g_stream[s]) continue;
+        u32 stride = g_stride[s], need = verts * stride;
+        if (!need) continue;
+        if (need > g_vb9_size[s]) {
+            if (g_vb9[s]) VCALL(g_vb9[s], 2, PFN_Scene)(g_vb9[s]);
+            g_vb9_size[s] = need > 0x100000 ? need : 0x100000;
+            g_vb9[s] = NULL;
+            VCALL(g_dev, DEV_CreateVertexBuffer, PFN_CreateVB)(g_dev, g_vb9_size[s], 0x208 /* DYNAMIC|WRITEONLY */,
+                                                               0, 0 /* DEFAULT */, &g_vb9[s], NULL);
         }
-        VCALL(g_dev, DEV_DrawIndexedPrimitiveUP, PFN_DrawIdxUP)(g_dev, 4, 0, quads * 4, quads * 2, idx,
-                                                                101 /* INDEX16 */, v, stride);
-        break;
+        if (!g_vb9[s]) return;
+        u8* dst;
+        if (VCALL(g_vb9[s], 11, PFN_VBLock)(g_vb9[s], 0, need, (void**)&dst, 0x2000 /* DISCARD */) < 0) return;
+        const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * stride;
+        if (nidx) for (u32 k = 0; k < nidx; k++) memcpy(dst + k * stride, src + g_quad_idx[k] * stride, stride);
+        else memcpy(dst, src, need);
+        VCALL(g_vb9[s], 12, PFN_VBUnlock)(g_vb9[s]);
+        VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, s, g_vb9[s], 0, stride);
     }
-    }
+    u32 n, t = prim9(prim, verts, &n);
+    if (n) VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, 0, n);
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
 void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
-    draw(prim, count, data, stride);
+    if (!g_dev || !data || !count) return;
+    if (!bind_vshader()) { g_stat_skipped++; return; }
+    apply_state();
+    if (prim == 8) {
+        u32 nidx = quad_indices(count);
+        VCALL(g_dev, DEV_DrawIndexedPrimitiveUP, PFN_DrawIdxUP)(g_dev, 4, 0, count, nidx / 3, g_quad_idx,
+                                                                101 /* INDEX16 */, data, stride);
+        return;
+    }
+    u32 n, t = prim9(prim, count, &n);
+    if (n) VCALL(g_dev, DEV_DrawPrimitiveUP, PFN_DrawUP)(g_dev, t, n, data, stride);
 }
 
-/* DrawVertices(PrimitiveType, StartVertex, VertexCount) from stream 0 */
+/* DrawVertices(PrimitiveType, StartVertex, VertexCount) from the stream sources */
 void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
 {
     g_stat_draw++;
-    if (!g_stream0) return;
-    const u8* base = (const u8*)(g_stream0->Data | 0x80000000u);
-    draw(prim, count, base + start * g_stride0, g_stride0);
+    if (!g_dev || !count) return;
+    if (!bind_vshader()) { g_stat_skipped++; return; }
+    apply_state();
+    draw_streams(prim, start, count);
 }
 
 /* ------------------------------------------------------------ screenshots */
 
 /* F12, or the frame number in env PC_SHOT: back buffer -> shot_<frame>.bmp */
-IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n);
 IMPORT HANDLE WINAPI CreateFileA(const char* name, u32 access, u32 share, void* sa, u32 disp, u32 flags, HANDLE tmpl);
 IMPORT BOOL   WINAPI CloseHandle(HANDLE h);
 

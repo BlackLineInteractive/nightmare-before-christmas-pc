@@ -9,6 +9,8 @@ each C function has the same calling convention and stack size.
 import os
 import subprocess
 
+import nv2a_vsh
+
 SRC = 'src/PC/pc.c'
 OBJ = 'build/pc/pc.o'
 
@@ -60,8 +62,8 @@ D3D_TO_PC = {
     0x1d2e90: ('_pc_LoadVertexShader@8', 'D3DDevice_LoadVertexShader'),
     0x1d2ef0: ('_pc_SelectVertexShader@8', 'D3DDevice_SelectVertexShader'),
     0x1d2fb0: ('_pc_SetShaderConstantMode@4', 'D3DDevice_SetShaderConstantMode'),
-    0x1d2bd0: ('@pc_SetVertexShaderConstant_2@8', 'D3DDevice_SetVertexShaderConstant1'),
-    0x1d2c30: ('@pc_SetVertexShaderConstant_2@8', 'D3DDevice_SetVertexShaderConstant4'),
+    0x1d2bd0: ('@pc_SetVertexShaderConstant1@8', 'D3DDevice_SetVertexShaderConstant1'),
+    0x1d2c30: ('@pc_SetVertexShaderConstant4@8', 'D3DDevice_SetVertexShaderConstant4'),
     0x1d2dc0: ('@pc_SetVertexShaderConstantNotInline@12', 'D3DDevice_SetVertexShaderConstantNotInline'),
     0x1d22c0: ('_pc_CreatePixelShader@8', 'D3DDevice_CreatePixelShader'),
     0x1d2370: ('_pc_SetPixelShader@4', 'D3DDevice_SetPixelShader'),
@@ -141,6 +143,7 @@ DLL_OF = {
                    'DispatchMessageA', 'DefWindowProcA', 'PostQuitMessage', 'AdjustWindowRect', 'LoadCursorA',
                    'GetAsyncKeyState'},
     'xinput9_1_0.dll': {'XInputGetState'},
+    'd3dcompiler_47.dll': {'D3DCompile'},
 }
 
 
@@ -152,11 +155,14 @@ def dll_of(fn):
 
 
 def compile_renderer():
-    """clang -c src/PC/pc.c -> i386 COFF object (any clang with the x86 backend)."""
+    """clang -c src/PC/pc.c -> i386 COFF object (any clang with the x86 backend).
+
+    The game's vertex shaders are translated first (build/pc/vshaders.inc)."""
     os.makedirs(os.path.dirname(OBJ), exist_ok=True)
+    nv2a_vsh.emit_c(nv2a_vsh.xbe_reader('rom/extracted/default.xbe'), os.path.join(os.path.dirname(OBJ), 'vshaders.inc'))
     clang = os.environ.get('CLANG', 'clang')
     subprocess.run([clang, '--target=i686-pc-windows-gnu', '-c', '-O2', '-ffreestanding', '-fno-builtin',
                     '-fno-stack-protector', '-fno-asynchronous-unwind-tables', '-fno-unwind-tables',
                     '-fno-ident', '-mno-stack-arg-probe', '-msse2', '-Wall', '-Wno-unused-function',
-                    SRC, '-o', OBJ], check=True)
+                    '-I', os.path.dirname(OBJ), SRC, '-o', OBJ], check=True)
     return OBJ

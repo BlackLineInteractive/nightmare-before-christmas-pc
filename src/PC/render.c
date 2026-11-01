@@ -306,22 +306,10 @@ void WINAPI pc_SetTextureState_TexCoordIndex(u32 stage, u32 value) { }
 
 /* ---------------------------------------------------------------- shaders */
 
-static u32 g_vshader, g_pshader;
-HRESULT WINAPI pc_CreateVertexShader(const u32* decl, const u32* fn, u32* handle, u32 usage)
-{
-    static u32 next = 1;
-    *handle = (next++ << 1) | 1;   /* odd = shader handle, even = FVF on Xbox */
-    return 0;
-}
-HRESULT WINAPI pc_SetVertexShader(u32 handle) { g_vshader = handle; return 0; }
-HRESULT WINAPI pc_GetVertexShader(u32* handle) { *handle = g_vshader; return 0; }
+static u32 g_pshader;
+/* vertex shaders: vshader.c */
 HRESULT WINAPI pc_GetVertexShaderSize(u32 handle, u32* size) { *size = 0; return 0; }
-/* The game picks its programmable vertex shaders with Load/SelectVertexShader */
-HRESULT WINAPI pc_LoadVertexShader(u32 handle, u32 addr) { g_vshader = handle; return 0; }
-HRESULT WINAPI pc_SelectVertexShader(u32 handle, u32 addr) { g_vshader = handle; return 0; }
 HRESULT WINAPI pc_SetShaderConstantMode(u32 mode) { return 0; }
-void FASTCALL pc_SetVertexShaderConstant_2(u32 reg, const void* data) { }
-void FASTCALL pc_SetVertexShaderConstantNotInline(u32 reg, const void* data, u32 count) { }
 HRESULT WINAPI pc_CreatePixelShader(const void* def, u32* handle) { static u32 next = 1; *handle = next++; return 0; }
 HRESULT WINAPI pc_SetPixelShader(u32 handle) { g_pshader = handle; return 0; }
 HRESULT WINAPI pc_GetPixelShader(u32* handle) { *handle = g_pshader; return 0; }
@@ -329,8 +317,8 @@ HRESULT WINAPI pc_SetPixelShaderProgram(const void* def) { return 0; }
 
 /* ------------------------------------------------------------------ draw */
 
-static XRes* g_stream0; static u32 g_stride0;
-HRESULT WINAPI pc_SetStreamSource(u32 n, XRes* vb, u32 stride) { if (!n) { g_stream0 = vb; g_stride0 = stride; } return 0; }
+static XRes* g_stream[16]; static u32 g_stride[16];
+HRESULT WINAPI pc_SetStreamSource(u32 n, XRes* vb, u32 stride) { if (n < 16) { g_stream[n] = vb; g_stride[n] = stride; } return 0; }
 /* pc_DrawVerticesUP / pc_DrawVertices: draw.c */
 
 /* ------------------------------------------------------------------ misc */
