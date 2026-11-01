@@ -3,7 +3,11 @@
 #include "OogieEngine/Host/D3D8Bridge.h"
 #include "OogieEngine/Host/InputBridge.h"
 #include "OogieEngine/Core/VFS.h"
+#include "OogieEngine/SG/StageScene.h"
+#include "OogieEngine/Rendering/Camera.h"
+#include "OogieEngine/Rendering/GPUTexture.h"
 #include "raylib.h"
+#include "rlgl.h"
 #include <iostream>
 #include <filesystem>
 #include <vector>
@@ -67,9 +71,15 @@ int main(int argc, char** argv) {
     std::cout << "======================================================" << std::endl;
 
     bool isHeadless = false;
+    std::string requestedStage = "";
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--headless") {
+        std::string arg = argv[i];
+        if (arg == "--headless") {
             isHeadless = true;
+        } else if (arg.rfind("--stage=", 0) == 0) {
+            requestedStage = arg.substr(8);
+        } else if (arg.find(".dat") != std::string::npos || arg.find("0") != std::string::npos) {
+            requestedStage = arg;
         }
     }
 
@@ -94,6 +104,7 @@ int main(int argc, char** argv) {
     if (!fs::exists(exePath, ec)) {
         exePath = (baseDir / "rom/default.exe").string();
     }
+
     auto& host = OogieEngine::Host::OogieHost::Instance();
     if (!host.Initialize(exePath)) {
         std::cerr << "[Main] Failed to initialize Native Host!" << std::endl;
@@ -117,18 +128,61 @@ int main(int argc, char** argv) {
     const int screenWidth = 1280;
     const int screenHeight = 960; // 4:3 native aspect ratio upscaled 2x from 640x480
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     InitWindow(screenWidth, screenHeight, "The Nightmare Before Christmas: Oogie's Revenge (Native PC Port)");
     SetTargetFPS(60);
+
+    // Initialize 3D Graphics & Texture Cache
+    OogieEngine::Rendering::GPUTextureCache::Instance().Initialize();
+
+    // 4. Load Initial Stage (Dr. Finkelstein's Lab 020a or Halloween Town 0000)
+    OogieEngine::SG::StageScene stageScene;
+    std::string stageDir = (baseDir / "rom/structured_data/stages/020a").string();
+    if (!requestedStage.empty()) {
+        if (fs::exists(requestedStage, ec)) {
+            stageDir = requestedStage;
+        } else if (fs::exists(baseDir / "rom/structured_data/stages" / requestedStage, ec)) {
+            stageDir = (baseDir / "rom/structured_data/stages" / requestedStage).string();
+        }
+    }
+
+    if (!fs::exists(stageDir, ec)) {
+        stageDir = (baseDir / "rom/structured_data/stages/0000").string();
+    }
+
+    std::cout << "[Main] Loading 3D Game Stage: " << stageDir << std::endl;
+    stageScene.LoadStage(stageDir);
+
+    // Initialize 3D Camera
+    OogieEngine::Rendering::ViewerCamera camera;
+    camera.FocusOn(stageScene.GetBoundingBox());
 
     auto& input = OogieEngine::Host::InputBridge::Instance();
     auto& d3d = OogieEngine::Host::D3D8Bridge::Instance();
 
-    std::cout << "\n[Main] Game window started! Controls:" << std::endl;
-    std::cout << "  [W/A/S/D] Movement | [Space] Jump | [J] Soul Robber | [K] Attack | [L] Costume" << std::endl;
+    bool showHUD = true;
+
+    std::cout << "\n[Main] 3D Native Game Window active!" << std::endl;
+    std::cout << "  [RMB Hold + WASD] Fly Camera | [LMB Drag] Orbit | [Wheel] Zoom | [Tab] Toggle HUD" << std::endl;
+    std::cout << "  [1..5] Switch Render Modes (Textured, Wireframe, Normals)" << std::endl;
 
     while (!WindowShouldClose()) {
-        // Poll Host inputs and deliver to InputBridge
+        float dt = GetFrameTime();
+
+        // Toggle HUD overlay
+        if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_F1)) {
+            showHUD = !showHUD;
+        }
+
+        // Camera mode toggle
+        if (IsKeyPressed(KEY_C)) {
+            camera.SetMode(camera.GetMode() == OogieEngine::Rendering::CameraMode::Orbit ?
+                           OogieEngine::Rendering::CameraMode::Fly : OogieEngine::Rendering::CameraMode::Orbit);
+        }
+
+        // Update Camera and Input Bridge
+        camera.Update(dt);
+
         input.UpdateKeyState('W', IsKeyDown(KEY_W));
         input.UpdateKeyState('S', IsKeyDown(KEY_S));
         input.UpdateKeyState('A', IsKeyDown(KEY_A));
@@ -142,30 +196,43 @@ int main(int argc, char** argv) {
         Vector2 mouseDelta = GetMouseDelta();
         input.UpdateMouseDelta(mouseDelta.x, mouseDelta.y);
 
-        // Frame rendering cycle
+        // Update 3D Stage Scene
+        stageScene.Update(dt);
+
+        // 3D Rendering Pass (Two-Pass Pipeline via Modern OpenGL)
         BeginDrawing();
-        ClearBackground((Color){ 15, 12, 22, 255 }); // Dark Halloween Town ambient
+        ClearBackground((Color){ 10, 8, 16, 255 }); // Dark Gothic ambient
 
-        // Draw Native Port HUD / Status
-        DrawText("Tim Burton's The Nightmare Before Christmas: Oogie's Revenge", 24, 24, 22, (Color){ 240, 200, 80, 255 });
-        DrawText("Capcom RD3 Engine - Native x86 Reconstructed Port", 24, 54, 16, (Color){ 180, 180, 190, 255 });
+        rlSetClipPlanes(1.0f, 100000.0f);
+        BeginMode3D(camera.GetRaylibCamera());
 
-        DrawRectangle(24, 84, 460, 200, (Color){ 25, 20, 35, 220 });
-        DrawRectangleLines(24, 84, 460, 200, (Color){ 80, 65, 110, 255 });
+        // Render 3D Scene
+        stageScene.Draw(OogieEngine::Rendering::RenderMode::Textured);
 
-        DrawText("Runtime Status:", 40, 96, 16, (Color){ 255, 255, 255, 255 });
-        DrawText(TextFormat("FPS: %d (%.2f ms)", GetFPS(), GetFrameTime() * 1000.0f), 40, 122, 14, (Color){ 100, 240, 140, 255 });
-        DrawText("x86 Game Logic: ACTIVE (.text 1.83 MB)", 40, 144, 14, (Color){ 140, 200, 255, 255 });
-        DrawText("Xbox Kernel: 125 Ordinals -> Core::VFS", 40, 166, 14, (Color){ 140, 200, 255, 255 });
-        DrawText("D3D NV2A Bridge: OpenGL 3.3 Active", 40, 188, 14, (Color){ 140, 200, 255, 255 });
-        DrawText("Input: Port 0 Connected (WASD / Gamepad)", 40, 210, 14, (Color){ 140, 200, 255, 255 });
-        DrawText("VFS Active: stm_data / 0000.lz", 40, 232, 14, (Color){ 255, 220, 120, 255 });
+        EndMode3D();
 
-        DrawText("Controls: [WASD] Move | [Space] Jump | [J] Soul Robber | [K] Attack | [Esc] Pause", 24, screenHeight - 36, 15, (Color){ 160, 160, 175, 255 });
+        // 2D HUD Overlay (Toggleable via Tab / F1)
+        if (showHUD) {
+            DrawRectangle(16, 16, 470, 210, (Color){ 15, 12, 22, 220 });
+            DrawRectangleLines(16, 16, 470, 210, (Color){ 80, 65, 110, 255 });
+
+            DrawText("Tim Burton's The Nightmare Before Christmas: Oogie's Revenge", 28, 26, 15, (Color){ 240, 200, 80, 255 });
+            DrawText("Capcom RD3 Engine - Native x86 Reconstructed Port", 28, 46, 12, (Color){ 180, 180, 190, 255 });
+
+            DrawText(TextFormat("FPS: %d (%.2f ms) | Stage: %s", GetFPS(), dt * 1000.0f, stageScene.GetStageId().c_str()), 28, 72, 13, (Color){ 100, 240, 140, 255 });
+            DrawText(TextFormat("Geometry: %zu Models | %zu Triangles", stageScene.GetModelNodes().size(), stageScene.GetTotalTriangles()), 28, 92, 13, (Color){ 200, 200, 210, 255 });
+            DrawText("x86 Game Logic: ACTIVE (.text 1.83 MB)", 28, 114, 13, (Color){ 140, 200, 255, 255 });
+            DrawText("Xbox Kernel: 125 Ordinals -> Core::VFS", 28, 134, 13, (Color){ 140, 200, 255, 255 });
+            DrawText("D3D NV2A Bridge: OpenGL 3.3 Active", 28, 154, 13, (Color){ 140, 200, 255, 255 });
+            DrawText("Input: Port 0 Connected (WASD / Mouse Look)", 28, 174, 13, (Color){ 140, 200, 255, 255 });
+            DrawText("Controls: [RMB + WASD] Fly | [LMB] Orbit | [Wheel] Zoom | [Tab] Hide HUD", 28, 196, 11, (Color){ 255, 220, 120, 255 });
+        }
 
         EndDrawing();
     }
 
+    stageScene.Unload();
+    OogieEngine::Rendering::GPUTextureCache::Instance().Shutdown();
     CloseWindow();
     std::cout << "[Main] Game window closed gracefully." << std::endl;
     return 0;

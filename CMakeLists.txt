@@ -60,11 +60,19 @@ add_executable(oogie_viewer
 add_executable(oogie_port
     src/Core/VFS.cpp
     src/Loader/CapcomLZ.cpp
+    src/Loader/PodLoader.cpp
+    src/Loader/SceneLoader.cpp
+    src/Rendering/GPUMesh.cpp
+    src/Rendering/GPUTexture.cpp
+    src/Rendering/Camera.cpp
+    src/SG/SceneNode.cpp
+    src/SG/StageScene.cpp
     src/Host/XboxKernelThunks.cpp
     src/Host/D3D8Bridge.cpp
     src/Host/InputBridge.cpp
     src/Host/OogieHost.cpp
     src/Host/main_host.cpp
+    ${IMGUI_SOURCES}
 )
 
 target_link_libraries(oogie_port PRIVATE
