@@ -3,7 +3,7 @@
 Complete Flat PE Generator & Hardware Patcher for Capcom RD3 'Oogie's Revenge'
 Generates:
 1. rom/extracted/default_pc.exe (Flat single-section PE with 1:1 memory mapping)
-2. rom/extracted/xboxkrnl.dll (Win32 export DLL with real data exports for 322 and 324)
+
 """
 
 import os
@@ -55,7 +55,7 @@ XBOX_KERNEL_ORDINALS = {
     325: ("LaunchDataPage", 0),         # DATA
 }
 
-def build_flat_binary(xbe_path, pe_path, dll_path):
+def build_flat_binary(xbe_path, pe_path):
     print(f"[*] Reading Xbox binary: {xbe_path}")
     with open(xbe_path, 'rb') as f:
         xbe = f.read()
@@ -312,155 +312,8 @@ def build_flat_binary(xbe_path, pe_path, dll_path):
 
     print(f"[+] Successfully generated patched PE: '{pe_path}' ({os.path.getsize(pe_path):,} bytes)")
 
-    # 5. Generate matching xboxkrnl.dll with REAL DATA EXPORTS for 322 and 324
-    generate_full_xboxkrnl_dll(dll_path)
-
-
-def generate_full_xboxkrnl_dll(dll_path):
-    print(f"[*] Generating full Win32 'xboxkrnl.dll': {dll_path}")
-    image_base = 0x10000000
-    sec_align = 0x1000
-    file_align = 0x1000
-
-    # 3 sections: .text (code), .data (variables for 322, 324), .edata (exports)
-    text_rva = 0x1000
-    text_code = bytearray()
-
-    # DllMain: mov eax, 1; ret 12
-    dll_entry_rva = text_rva
-    text_code.extend(b'\xB8\x01\x00\x00\x00\xC2\x0C\x00')
-
-    # Data section:
-    # 0x00: XboxHardwareInfo (flags=0, gpu=1, mcp=1, region=1) -> 16 bytes
-    # 0x10: XboxKrnlVersion  (Major=1, Minor=0, Build=5933, Qfe=1) -> 8 bytes
-    data_rva = 0x2000
-    data_payload = bytearray(0x100)
-    # Hardware info:
-    struct.pack_into('<IIII', data_payload, 0, 0x00000000, 0x00000001, 0x00000001, 0x00000001)
-    # Krnl version:
-    struct.pack_into('<HHHH', data_payload, 16, 1, 0, 5933, 1)
-
-    xbox_hw_info_rva = data_rva + 0
-    xbox_krnl_ver_rva = data_rva + 16
-
-    max_ordinal = 378
-    base_ordinal = 1
-    num_funcs = max_ordinal - base_ordinal + 1
-    func_rvas = [0] * num_funcs
-
-    for ord_num in range(base_ordinal, max_ordinal + 1):
-        idx = ord_num - base_ordinal
-
-        if ord_num == 322: # XboxHardwareInfo (DATA)
-            func_rvas[idx] = xbox_hw_info_rva
-        elif ord_num == 324: # XboxKrnlVersion (DATA)
-            func_rvas[idx] = xbox_krnl_ver_rva
-        elif ord_num == 301: # XboxKrnlVersion (Function returning 0x00010f40)
-            func_rvas[idx] = text_rva + len(text_code)
-            text_code.extend(b'\xB8\x40\x0F\x01\x00\xC3')
-        elif ord_num == 255: # PsCreateSystemThreadEx
-            # Stub stdcall: 8 args = 32 bytes -> xor eax, eax; ret 32
-            func_rvas[idx] = text_rva + len(text_code)
-            text_code.extend(b'\x31\xC0\xC2\x20\x00')
-        elif ord_num in XBOX_KERNEL_ORDINALS:
-            name, arg_count = XBOX_KERNEL_ORDINALS[ord_num]
-            func_rvas[idx] = text_rva + len(text_code)
-            if arg_count == 0:
-                text_code.extend(b'\x31\xC0\xC3') # xor eax, eax; ret
-            else:
-                stack_bytes = arg_count * 4
-                text_code.extend(b'\x31\xC0\xC2' + struct.pack('<H', stack_bytes)) # ret N
-        else:
-            func_rvas[idx] = text_rva + len(text_code)
-            text_code.extend(b'\x31\xC0\xC3')
-
-    text_vsize = len(text_code)
-    text_rsize = align(text_vsize, file_align)
-    text_code.extend(b'\x00' * (text_rsize - text_vsize))
-
-    data_vsize = len(data_payload)
-    data_rsize = align(data_vsize, file_align)
-    data_payload.extend(b'\x00' * (data_rsize - data_vsize))
-
-    # .edata (Exports) Section
-    edata_rva = 0x3000
-    dll_name_rva = edata_rva + 40
-    funcs_table_rva = edata_rva + 56
-
-    export_dir = struct.pack(
-        '<IIIIIIIIII',
-        0, 0, 0,
-        dll_name_rva,
-        base_ordinal,
-        num_funcs,
-        0,
-        funcs_table_rva,
-        0, 0
-    )
-
-    funcs_data = bytearray()
-    for rva in func_rvas:
-        funcs_data.extend(struct.pack('<I', rva))
-
-    edata_payload = bytearray()
-    edata_payload.extend(export_dir)
-    edata_payload.extend(b'xboxkrnl.dll\x00\x00\x00\x00')
-    edata_payload.extend(funcs_data)
-
-    edata_vsize = len(edata_payload)
-    edata_rsize = align(edata_vsize, file_align)
-    edata_payload.extend(b'\x00' * (edata_rsize - edata_vsize))
-
-    num_sections = 3
-    coff_hdr = struct.pack('<HHIIIHH', 0x014c, num_sections, 0, 0, 0, 224, 0x2102)
-
-    total_size = edata_rva + edata_rsize
-
-    opt_hdr = struct.pack(
-        '<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII',
-        0x010b, 7, 10,
-        text_rsize, data_rsize + edata_rsize, 0,
-        dll_entry_rva, text_rva, data_rva,
-        image_base, sec_align, file_align,
-        4, 0, 0, 0, 4, 0, 0,
-        total_size, 0x1000, 0,
-        2, 0x2102,
-        0x100000, 0x1000, 0x100000, 0x1000,
-        0, 16
-    )
-
-    data_dirs = bytearray(16 * 8)
-    struct.pack_into('<II', data_dirs, 0*8, edata_rva, edata_vsize)
-
-    sec_headers = bytearray()
-    sec_headers.extend(struct.pack('<8sIIIIIIHHI', b'.text\x00\x00\x00', text_vsize, text_rva, text_rsize, text_rva, 0, 0, 0, 0, 0x60000020))
-    sec_headers.extend(struct.pack('<8sIIIIIIHHI', b'.data\x00\x00\x00', data_vsize, data_rva, data_rsize, data_rva, 0, 0, 0, 0, 0xC0000040))
-    sec_headers.extend(struct.pack('<8sIIIIIIHHI', b'.edata\x00\x00', edata_vsize, edata_rva, edata_rsize, edata_rva, 0, 0, 0, 0, 0x40000040))
-
-    header_block = bytearray(0x1000)
-    dos_hdr = bytearray(64)
-    dos_hdr[0:2] = b'MZ'
-    struct.pack_into('<I', dos_hdr, 0x3C, 128)
-    header_block[0:64] = dos_hdr
-    header_block[128:132] = b'PE\x00\x00'
-    header_block[132 : 132 + len(coff_hdr)] = coff_hdr
-    off = 132 + len(coff_hdr)
-    header_block[off : off + len(opt_hdr)] = opt_hdr
-    off += len(opt_hdr)
-    header_block[off : off + len(data_dirs)] = data_dirs
-    off += len(data_dirs)
-    header_block[off : off + len(sec_headers)] = sec_headers
-
-    with open(dll_path, 'wb') as f:
-        f.write(header_block)
-        f.write(text_code)
-        f.write(data_payload)
-        f.write(edata_payload)
-
-    print(f"[+] Successfully generated 'xboxkrnl.dll': {os.path.getsize(dll_path):,} bytes")
 
 if __name__ == '__main__':
     xbe = "rom/extracted/default.xbe"
     pe = "rom/extracted/default_pc.exe"
-    dll = "rom/extracted/xboxkrnl.dll"
-    build_flat_binary(xbe, pe, dll)
+    build_flat_binary(xbe, pe)
