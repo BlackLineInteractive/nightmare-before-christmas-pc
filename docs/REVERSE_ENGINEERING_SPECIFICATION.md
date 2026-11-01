@@ -353,3 +353,4 @@ With the Xbox architecture being native 32-bit x86 Little-Endian and all 365 sta
 - **Reference Toolkit:** [`BlackLineInteractive/Climax_Game_Engine_Toolkit`](https://github.com/BlackLineInteractive/Climax_Game_Engine_Toolkit)
 - **Executable Target:** `rom/extracted/default.xbe`
 - **Extracted Datasets:** `rom/structured_data/`
+
