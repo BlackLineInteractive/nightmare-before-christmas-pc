@@ -2,58 +2,21 @@
 """
 Complete Flat PE Generator & Hardware Patcher for Capcom RD3 'Oogie's Revenge'
 Generates:
-1. rom/extracted/default_pc.exe (Flat single-section PE with 1:1 memory mapping)
+1. rom/extracted/default_pc.exe (flat PE with 1:1 memory mapping of default.xbe)
 
+The Xbox kernel is not needed: XAPI is pointed at Windows kernel32.dll
+(see tools/xapi_port.py), the only imports are kernel32.dll and ntdll.dll.
 """
 
 import os
 import sys
 import struct
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import xapi_port
+
 def align(val, alignment):
     return (val + alignment - 1) & ~(alignment - 1)
-
-# Xbox Kernel ordinals with argument counts
-# (arg_count * 4 = stack bytes for stdcall 'ret N')
-XBOX_KERNEL_ORDINALS = {
-    14:  ("AvSetDisplayMode", 6),
-    18:  ("DbgPrint", 0),               # cdecl
-    71:  ("IoCreateDevice", 7),
-    165: ("MmAllocateContiguousMemory", 2),
-    166: ("MmAllocateContiguousMemoryEx", 6),
-    168: ("MmFreeContiguousMemory", 1),
-    170: ("MmMapIoSpace", 3),
-    173: ("MmPersistContiguousMemory", 3),
-    182: ("NtClose", 1),
-    187: ("NtSuspendThread", 2),
-    190: ("NtWaitForSingleObject", 3),
-    196: ("RtlAnsiStringToUnicodeString", 3),
-    197: ("RtlAppendStringToString", 2),
-    198: ("RtlAppendUnicodeToString", 2),
-    200: ("RtlAssert", 4),
-    211: ("RtlCopyString", 2),
-    218: ("RtlFreeAnsiString", 1),
-    219: ("RtlFreeUnicodeString", 1),
-    226: ("RtlInitUnicodeString", 2),
-    232: ("RtlIntegerToChar", 4),
-    233: ("RtlIntegerToUnicodeString", 3),
-    236: ("RtlLowerChar", 1),
-    246: ("KeInitializeEvent", 3),
-    250: ("KeSetEvent", 3),
-    254: ("PsCreateSystemThread", 7),
-    255: ("PsCreateSystemThreadEx", 8),
-    259: ("RtlEnterCriticalSection", 1),
-    260: ("RtlLeaveCriticalSection", 1),
-    277: ("RtlInitAnsiString", 2),
-    291: ("RtlUnicodeStringToAnsiString", 3),
-    294: ("RtlZeroMemory", 2),
-    301: ("XboxKrnlVersion", 0),
-    320: ("XeImageFileName", 0),        # DATA
-    322: ("XboxHardwareInfo", 0),       # DATA
-    323: ("XboxCertificate", 0),        # DATA
-    324: ("XboxKrnlVersionData", 0),    # DATA
-    325: ("LaunchDataPage", 0),         # DATA
-}
 
 def build_flat_binary(xbe_path, pe_path):
     print(f"[*] Reading Xbox binary: {xbe_path}")
@@ -138,120 +101,47 @@ def build_flat_binary(xbe_path, pe_path):
     image_mem[p5_off : p5_off + 5] = b'\x90\x90\x90\x90\x90'
     print(f"[+] [PATCH 5] Neutralized XPP MMIO write at VA 0x0025c41f")
 
-    # Neutralize ALL %fs:[0x20] and %fs:[0x28] Xbox KPCR/ETHREAD accesses
-    # Redirect them to safe writable dummy buffer at VA 0x00413d00
-    dummy_kpcr_va = 0x00413d00
-    kpcr_bytes_6 = b'\xB8' + struct.pack('<I', dummy_kpcr_va) + b'\x90' # mov eax, 0x00413d00; nop (6 bytes)
-    kpcr_bytes_7 = b'\xB8' + struct.pack('<I', dummy_kpcr_va) + b'\x90\x90' # 7 bytes
-
-    fs_patterns = [
-        (b'\x64\xa1\x20\x00\x00\x00', kpcr_bytes_6, "mov eax, fs:[0x20]"),
-        (b'\x64\xa1\x28\x00\x00\x00', kpcr_bytes_6, "mov eax, fs:[0x28]"),
-        (b'\x64\x8b\x05\x20\x00\x00\x00', kpcr_bytes_7, "mov eax, fs:[0x20]"),
-        (b'\x64\x8b\x05\x28\x00\x00\x00', kpcr_bytes_7, "mov eax, fs:[0x28]")
-    ]
-
-    fs_patch_count = 0
-    for pat, repl, desc in fs_patterns:
-        pos = 0
-        while True:
-            idx = image_mem.find(pat, pos)
-            if idx == -1: break
-            image_mem[idx : idx + len(repl)] = repl
-            va = base_addr + idx
-            print(f"[+] [FS PATCH] Replaced {desc} at VA 0x{va:08x} -> dummy KPCR (0x{dummy_kpcr_va:08x})")
-            fs_patch_count += 1
-            pos = idx + len(repl)
-    print(f"[*] Total %fs KPCR/ETHREAD accesses neutralized: {fs_patch_count}")
-
-    # Patch 9: Direct boot into Capcom RD3 main loop (0x1bf5d3) from Entry Point (0x1bf647)
-    # 0x001bf5d3 - (0x001bf647 + 5) = -0x79 = 0xFFFFFF87
-    p9_off = 0x001bf647 - base_addr
-    image_mem[p9_off : p9_off + 5] = b'\xE9\x87\xFF\xFF\xFF'
-    print(f"[+] [PATCH 9] Boot entry point redirected directly to Capcom RD3 main (0x001bf5d3)")
-
-    # 4. Construct Windows PE Headers and .idata Section
-    iat_va = 0x00260020
-    iat_rva = iat_va - base_addr # 0x00250020
-    iat_off = iat_rva
-
-    # Read 125 ordinals from original IAT table
-    ords = []
-    for i in range(125):
-        val = struct.unpack('<I', image_mem[iat_off + i*4 : iat_off + (i+1)*4])[0]
-        ords.append(val & 0x7fffffff)
-    print(f"[*] Read {len(ords)} Xbox Kernel import ordinals from IAT RVA 0x{iat_rva:08x}")
-
-    # Layout for .idata section
+    # 4. XAPI -> Windows (tools/xapi_port.py): XAPI functions jump into
+    #    kernel32.dll, kernel thunks still used by LIBC go to ntdll/kernel32,
+    #    KPCR / TLS accesses use the Windows TEB, paths are made relative.
     section_alignment = 0x1000
     file_alignment = 0x1000
-
     flat_sec_vaddr = 0x1000
     flat_sec_vsize = total_span - flat_sec_vaddr
-    flat_sec_rsize = align(flat_sec_vsize, file_alignment)
-    flat_sec_raddr = 0x1000
 
-    idata_sec_vaddr = align(flat_sec_vaddr + flat_sec_vsize, section_alignment)
-    idata_sec_raddr = align(flat_sec_raddr + flat_sec_rsize, file_alignment)
+    kernel_names = read_kernel_thunks(image_mem, base_addr)
+    port_rva = align(total_span, section_alignment)
+    port, info = xapi_port.build_port_section(image_mem, base_addr, port_rva, kernel_names)
+    st = info['stats']
+    print(f"[+] XAPI: {st['xapi']} functions -> kernel32, {st['stubs']} X* replacements")
+    print(f"[+] Kernel thunks: {st['bound']} -> Windows, {st['data']} data, {st['traps']} unported (trap)")
+    print(f"[+] Paths: host0: builder + {st['paths']} drive strings -> .\\; KPCR sites: {st['kpcr']}")
 
-    # In .idata:
-    # 0x00: IMAGE_IMPORT_DESCRIPTOR (20 bytes)
-    # 0x14: null terminator descriptor (20 bytes)
-    # 0x28: OriginalFirstThunk (INT): 125 * 4 bytes + 4 bytes null
-    # after INT: DLL name "xboxkrnl.dll\0"
-    num_ords = len(ords)
-    int_offset = 40
-    int_rva = idata_sec_vaddr + int_offset
-    dll_name_offset = int_offset + (num_ords + 1) * 4
-    dll_name_rva = idata_sec_vaddr + dll_name_offset
+    # 5. PE headers: .flat (XBE 1:1) + .port
+    out_secs = [
+        dict(name='.flat', rva=flat_sec_vaddr, data=image_mem[flat_sec_vaddr:total_span], flags=0xE0000060),
+        dict(name='.port', rva=port_rva, data=port, flags=0xE0000060),
+    ]
+    raw = 0x1000
+    for sec in out_secs:
+        sec['vsize'] = align(len(sec['data']), section_alignment)
+        sec['rsize'] = align(len(sec['data']), file_alignment)
+        sec['raw'] = raw
+        raw += sec['rsize']
+    total_image_size = port_rva + out_secs[1]['vsize']
 
-    import_desc = struct.pack(
-        '<IIIII',
-        int_rva,        # OriginalFirstThunk
-        0,              # TimeDateStamp
-        0,              # ForwarderChain
-        dll_name_rva,   # Name
-        iat_rva         # FirstThunk (points to VA 0x00260020)
-    )
-    null_desc = bytes(20)
-
-    int_entries = bytearray()
-    for o in ords:
-        # High bit set indicates import by ordinal
-        int_entries.extend(struct.pack('<I', 0x80000000 | o))
-    int_entries.extend(bytes(4)) # null terminator
-
-    dll_name_bytes = b'xboxkrnl.dll\x00\x00\x00\x00'
-
-    idata_payload = bytearray()
-    idata_payload.extend(import_desc)
-    idata_payload.extend(null_desc)
-    idata_payload.extend(int_entries)
-    idata_payload.extend(dll_name_bytes)
-
-    idata_sec_vsize = len(idata_payload)
-    idata_sec_rsize = align(idata_sec_vsize, file_alignment)
-    idata_payload.extend(b'\x00' * (idata_sec_rsize - idata_sec_vsize))
-
-    total_image_size = idata_sec_vaddr + align(idata_sec_vsize, section_alignment)
-
-    # Assemble PE Headers
     dos_hdr = bytearray(64)
     dos_hdr[0:2] = b'MZ'
     pe_hdr_offset = 0xC00
     struct.pack_into('<I', dos_hdr, 0x3C, pe_hdr_offset)
 
-    pe_sig = b'PE\x00\x00'
-    coff_hdr = struct.pack(
-        '<HHIIIHH',
-        0x014c, 2, 0, 0, 0, 224, 0x0102
-    )
-
+    coff_hdr = struct.pack('<HHIIIHH', 0x014c, len(out_secs), 0, 0, 0, 224,
+                           0x0123)  # RELOCS_STRIPPED | EXECUTABLE | LARGE_ADDRESS_AWARE | 32BIT
     opt_hdr = struct.pack(
         '<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII',
         0x010b, 7, 10,
-        flat_sec_rsize, idata_sec_rsize, 0,
-        entry_point_va - base_addr, # EntryPoint
+        out_secs[0]['rsize'] + out_secs[1]['rsize'], 0, 0,
+        info['entry_rva'],
         flat_sec_vaddr, flat_sec_vaddr,
         base_addr, section_alignment, file_alignment,
         4, 0, 0, 0, 4, 0, 0,
@@ -261,56 +151,42 @@ def build_flat_binary(xbe_path, pe_path):
         0x200000, 0x20000, 0x200000, 0x10000,
         0, 16
     )
-
     data_dirs = bytearray(16 * 8)
-    # Import Directory (index 1)
-    struct.pack_into('<II', data_dirs, 1*8, idata_sec_vaddr, idata_sec_vsize)
-    # IAT Directory (index 12)
-    struct.pack_into('<II', data_dirs, 12*8, iat_rva, num_ords * 4)
-
-    sec1 = struct.pack(
-        '<8sIIIIIIHHI',
-        b'.flat\x00\x00\x00',
-        flat_sec_vsize, flat_sec_vaddr,
-        flat_sec_rsize, flat_sec_raddr,
-        0, 0, 0, 0,
-        0xE0000060  # RWX Code & Data
-    )
-
-    sec2 = struct.pack(
-        '<8sIIIIIIHHI',
-        b'.idata\x00\x00',
-        align(idata_sec_vsize, section_alignment), idata_sec_vaddr,
-        idata_sec_rsize, idata_sec_raddr,
-        0, 0, 0, 0,
-        0xC0000040  # RW Data
-    )
+    struct.pack_into('<II', data_dirs, 1 * 8, *info['import_dir'])
+    struct.pack_into('<II', data_dirs, 9 * 8, *info['tls_dir'])
+    struct.pack_into('<II', data_dirs, 12 * 8, *info['iat_dir'])
 
     header_block = bytearray(0x1000)
     header_block[0:64] = dos_hdr
     header_block[64:pe_hdr_offset] = xbe[64:pe_hdr_offset]
+    hdr = b'PE\x00\x00' + coff_hdr + opt_hdr + data_dirs
+    for sec in out_secs:
+        hdr += struct.pack('<8sIIIIIIHHI', sec['name'].encode(), sec['vsize'], sec['rva'],
+                           sec['rsize'], sec['raw'], 0, 0, 0, 0, sec['flags'])
+    header_block[pe_hdr_offset : pe_hdr_offset + len(hdr)] = hdr
 
-    off = pe_hdr_offset
-    header_block[off : off + 4] = pe_sig
-    off += 4
-    header_block[off : off + len(coff_hdr)] = coff_hdr
-    off += len(coff_hdr)
-    header_block[off : off + len(opt_hdr)] = opt_hdr
-    off += len(opt_hdr)
-    header_block[off : off + len(data_dirs)] = data_dirs
-    off += len(data_dirs)
-    header_block[off : off + len(sec1)] = sec1
-    off += len(sec1)
-    header_block[off : off + len(sec2)] = sec2
-
-    image_mem[0:0x1000] = header_block
-
-    # Write patched default_pc.exe
     with open(pe_path, 'wb') as out_f:
-        out_f.write(image_mem)
-        out_f.write(idata_payload)
+        out_f.write(header_block)
+        for sec in out_secs:
+            out_f.write(sec['data'])
+            out_f.write(b'\x00' * (sec['rsize'] - len(sec['data'])))
 
     print(f"[+] Successfully generated patched PE: '{pe_path}' ({os.path.getsize(pe_path):,} bytes)")
+    print(f"    entry 0x{base_addr + info['entry_rva']:08x} -> _rtinit, _cinit, game main 0x{xapi_port.GAME_MAIN:08x}")
+
+
+def read_kernel_thunks(image_mem, base_addr):
+    """[(thunk VA, ordinal, name)] for the XBE's xboxkrnl.exe thunk table."""
+    out = []
+    va = xapi_port.KERNEL_THUNKS_VA
+    while True:
+        val = struct.unpack_from('<I', image_mem, va - base_addr)[0]
+        if val == 0:
+            break
+        o = val & 0x7fffffff
+        out.append((va, o, xapi_port.KERNEL_ORDINAL_NAMES[o]))
+        va += 4
+    return out
 
 
 if __name__ == '__main__':
