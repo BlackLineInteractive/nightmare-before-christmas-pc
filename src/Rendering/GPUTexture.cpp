@@ -63,10 +63,14 @@ Texture2D GPUTextureCache::GetTexture(const std::string& name, const std::string
         searchPaths.push_back(textureDir + "/" + name + ".dds");
         searchPaths.push_back(textureDir + "/" + name + ".pig");
         searchPaths.push_back(textureDir + "/" + name);
+        searchPaths.push_back("../" + textureDir + "/" + name + ".dds");
+        searchPaths.push_back("../" + textureDir + "/" + name + ".pig");
     }
     searchPaths.push_back("rom/structured_data/stages/0000/textures/" + name + ".dds");
     searchPaths.push_back("rom/structured_data/stages/0000/textures/" + name + ".pig");
     searchPaths.push_back("structured_data/stages/0000/textures/" + name + ".dds");
+    searchPaths.push_back("../rom/structured_data/stages/0000/textures/" + name + ".dds");
+    searchPaths.push_back("../structured_data/stages/0000/textures/" + name + ".dds");
 
     for (const auto& path : searchPaths) {
         if (fs::exists(path)) {

@@ -24,6 +24,8 @@ struct ViewerState {
 
     Color clearColor = { 16, 16, 22, 255 };
     float cameraSpeed = 300.0f;
+    float nearClip = 1.0f;
+    float farClip = 100000.0f; // 100,000 units view distance (no clipping!)
     std::string activeStagePath = "rom/structured_data/stages/0000";
 };
 

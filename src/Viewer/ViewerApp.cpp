@@ -2,6 +2,7 @@
 #include "OogieEngine/UI/UITheme.h"
 #include "OogieEngine/Rendering/GPUTexture.h"
 #include "raylib.h"
+#include "rlgl.h"
 #include "rlImGui.h"
 #include "imgui.h"
 #include <iostream>
@@ -47,11 +48,21 @@ bool ViewerApp::Initialize(int width, int height, const char* title) {
 
     isRunning = true;
 
-    // Default stage to load if found
-    if (fs::exists("rom/structured_data/stages/0000")) {
-        LoadStage("rom/structured_data/stages/0000");
-    } else if (fs::exists("structured_data/stages/0000")) {
-        LoadStage("structured_data/stages/0000");
+    // Set far clipping distance to 100,000 units so nothing is clipped
+    rlSetClipPlanes(state.nearClip, state.farClip);
+
+    // Default stage to load if found across common candidate paths
+    const char* defaultCandidates[] = {
+        "rom/structured_data/stages/0000",
+        "structured_data/stages/0000",
+        "../rom/structured_data/stages/0000",
+        "../structured_data/stages/0000"
+    };
+    for (const char* p : defaultCandidates) {
+        if (fs::exists(p)) {
+            LoadStage(p);
+            break;
+        }
     }
 
     return true;
@@ -98,10 +109,13 @@ void ViewerApp::ProcessInput(float dt) {
 void ViewerApp::RenderScene() {
     ClearBackground(state.clearColor);
 
+    // Apply camera clip planes (farClip = 100,000 units)
+    rlSetClipPlanes(state.nearClip, state.farClip);
+
     BeginMode3D(camera.GetRaylibCamera());
 
     if (state.showGrid) {
-        DrawGrid(60, 50.0f);
+        DrawGrid(100, 50.0f);
     }
 
     stageScene.Draw(state.renderMode);
@@ -160,6 +174,9 @@ void ViewerApp::RenderMenuBar() {
             if (ImGui::MenuItem("Fly Camera (WASD+QE)", "C", !isOrbit)) {
                 camera.SetMode(Rendering::CameraMode::Fly);
             }
+            ImGui::Separator();
+            ImGui::TextDisabled("View Clipping:");
+            ImGui::SliderFloat("##FarClip", &state.farClip, 2000.0f, 200000.0f, "Far: %.0f units");
             ImGui::Separator();
             if (ImGui::MenuItem("Focus All", "F")) {
                 camera.FocusOn(stageScene.GetBoundingBox());
