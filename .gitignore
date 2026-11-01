@@ -1,5 +1,8 @@
 rom/
 extracted/
-
+build/
+unpacked_stm/
+*.stm
+__pycache__/
 .DS_Store
 .env
