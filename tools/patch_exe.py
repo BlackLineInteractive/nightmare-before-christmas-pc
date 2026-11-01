@@ -264,9 +264,12 @@ def patch_binary(in_exe_path, out_exe_path):
     # 4. Construct Windows PE Import Section (.idata)
     # We will append section .idata at the end of the binary
     last_sec = sections[-1]
-    new_sec_vaddr = align(last_sec['vaddr'] + last_sec['vsize'], section_alignment)
+    # Ensure .idata RVA is safely past the end of the last section
+    last_sec_end_vaddr = last_sec['vaddr'] + max(last_sec['vsize'], last_sec['rsize'])
+    new_sec_vaddr = align(last_sec_end_vaddr + section_alignment, section_alignment)
     new_sec_raddr = align(len(exe), file_alignment)
 
+    print(f"[*] Last section '{last_sec['name']}' ends at RVA 0x{last_sec_end_vaddr:08x}")
     print(f"[*] Creating .idata section at RVA 0x{new_sec_vaddr:08x}, Raw Offset 0x{new_sec_raddr:08x}")
 
     # Layout inside .idata:
@@ -390,6 +393,12 @@ def generate_xboxkrnl_dll(ordinals, dll_path):
     # For XboxKrnlVersion (301): 'mov eax, 0x00010f40; ret' (B8 40 0F 01 00 C3)
     text_rva = 0x1000
     text_code = bytearray()
+    
+    # 0x1000: DllMain entry point (stdcall: 3 args = 12 bytes, returns 1)
+    # B8 01 00 00 00 (mov eax, 1) C2 0C 00 (ret 12)
+    dll_entry_rva = text_rva
+    text_code.extend(b'\xB8\x01\x00\x00\x00\xC2\x0C\x00')
+
     func_rvas = [0] * num_funcs
 
     for ord_num in range(base_ordinal, max_ordinal + 1):

@@ -58,9 +58,14 @@ def convert_xbe_to_pe(xbe_path, pe_path):
     section_alignment = 0x1000
     file_alignment = 0x1000
 
-    # Parse sections first to compute sizes
+    # Reconstruct headers preserving original XBE header fields at 0x100..0xA00
+    size_of_headers = 0x2000
+
+    # Parse sections and allocate file layout with full BSS padding
     sec_off = sec_hdrs_addr - base_addr
     sections = []
+    current_raw_offset = size_of_headers
+
     for i in range(sec_count):
         sh = xbe[sec_off + i*56 : sec_off + (i+1)*56]
         flags, vaddr, vsize, raddr, rsize, name_addr = struct.unpack('<IIIIII', sh[:24])
@@ -71,20 +76,28 @@ def convert_xbe_to_pe(xbe_path, pe_path):
             name_off += 1
 
         rva = vaddr - base_addr
+        padded_raw_size = (max(vsize, rsize) + file_alignment - 1) & ~(file_alignment - 1)
+
         sections.append({
             'name': name[:8],
             'vsize': vsize,
             'rva': rva,
-            'rsize': rsize,
-            'raddr': raddr,
+            'rsize': padded_raw_size,
+            'orig_raddr': raddr,
+            'orig_rsize': rsize,
+            'raddr': current_raw_offset,
             'flags': flags
         })
-        if name == '.text':
-            size_of_code = rsize
-        elif name in ['.data', '.rdata', 'D3D', 'DSOUND']:
-            size_of_init_data += rsize
+        current_raw_offset += padded_raw_size
 
-    size_of_headers = 0x1000
+        if name == '.text':
+            size_of_code = padded_raw_size
+        elif name in ['.data', '.rdata', 'D3D', 'DSOUND']:
+            size_of_init_data += padded_raw_size
+
+    # Update total image size
+    last_sec = sections[-1]
+    img_size = ((last_sec['rva'] + last_sec['vsize']) + section_alignment - 1) & ~(section_alignment - 1)
 
     opt_hdr = struct.pack(
         '<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII',
@@ -105,7 +118,6 @@ def convert_xbe_to_pe(xbe_path, pe_path):
     pe_sec_headers = bytearray()
     for s in sections:
         sec_name_bytes = s['name'].encode('ascii')[:8].ljust(8, b'\x00')
-        # Standard PE characteristics: code vs data
         pe_char = 0x60000020 if s['name'] == '.text' else 0xC0000040
         sec_entry = struct.pack(
             '<8sIIIIIIHHI',
@@ -114,15 +126,20 @@ def convert_xbe_to_pe(xbe_path, pe_path):
             s['rva'],
             s['rsize'],
             s['raddr'],
-            0, 0, 0, 0,  # Relocations / Linenumbers
+            0, 0, 0, 0,
             pe_char
         )
         pe_sec_headers.extend(sec_entry)
 
-    # Assemble PE Header
-    header_block = bytearray(size_of_headers)
-    pe_hdr_offset = len(dos_hdr)
-    header_block[0:64] = dos_hdr
+    # Assemble PE Header into a copy of original XBE header block
+    # Preserves XBE header fields at 0x100..0xA00 that Capcom CRT startup reads!
+    header_block = bytearray(xbe[:size_of_headers])
+    header_block[0:2] = b'MZ'
+
+    # Place PE signature and headers in unused region at 0xC00
+    pe_hdr_offset = 0xC00
+    struct.pack_into('<I', header_block, 0x3C, pe_hdr_offset)
+
     header_block[pe_hdr_offset : pe_hdr_offset + 4] = pe_sig
     off = pe_hdr_offset + 4
     header_block[off : off + len(coff_hdr)] = coff_hdr
@@ -133,17 +150,16 @@ def convert_xbe_to_pe(xbe_path, pe_path):
     off += len(data_dirs)
     header_block[off : off + len(pe_sec_headers)] = pe_sec_headers
 
-    # Write output PE file
+    # Write output PE file with zero-padded BSS sections
     with open(pe_path, 'wb') as out_f:
-        # Write header
         out_f.write(header_block)
 
-        # Write sections from raw offsets in XBE
         for s in sections:
-            if s['rsize'] > 0 and s['raddr'] < len(xbe):
-                out_f.seek(s['raddr'])
-                sec_data = xbe[s['raddr'] : s['raddr'] + s['rsize']]
-                out_f.write(sec_data)
+            sec_buf = bytearray(s['rsize'])
+            if s['orig_rsize'] > 0 and s['orig_raddr'] < len(xbe):
+                copy_len = min(s['orig_rsize'], s['rsize'])
+                sec_buf[:copy_len] = xbe[s['orig_raddr'] : s['orig_raddr'] + copy_len]
+            out_f.write(sec_buf)
 
     print(f"[+] Successfully converted '{xbe_path}' -> '{pe_path}' ({os.path.getsize(pe_path):,} bytes)")
 
