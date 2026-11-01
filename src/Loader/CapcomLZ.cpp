@@ -138,3 +138,4 @@ std::vector<uint8_t> CapcomLZ::DecompressFile(const std::string& lzPath) {
 
 } // namespace Loader
 } // namespace OogieEngine
+

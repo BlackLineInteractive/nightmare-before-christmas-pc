@@ -116,3 +116,4 @@ std::string VFS::ReadText(const std::string& virtualPath) const {
 
 } // namespace Core
 } // namespace OogieEngine
+
