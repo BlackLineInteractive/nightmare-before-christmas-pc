@@ -14,6 +14,25 @@ namespace OogieEngine {
 namespace Viewer {
 
 int ViewerApp::Run(int argc, char** argv) {
+    // Auto-discover repository root from executable location
+    try {
+        if (argc > 0 && argv[0]) {
+            fs::path exePath = fs::canonical(fs::path(argv[0]));
+            fs::path p = exePath.parent_path();
+            for (int depth = 0; depth < 5; ++depth) {
+                if (fs::exists(p / "rom/structured_data") || fs::exists(p / "rom/extracted")) {
+                    fs::current_path(p);
+                    break;
+                }
+                if (p.has_parent_path() && p != p.parent_path()) {
+                    p = p.parent_path();
+                } else {
+                    break;
+                }
+            }
+        }
+    } catch (...) {}
+
     ViewerApp app;
     if (!app.Initialize()) {
         std::cerr << "[ViewerApp] Failed to initialize engine!" << std::endl;

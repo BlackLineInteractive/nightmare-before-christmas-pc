@@ -6,8 +6,59 @@
 #include "raylib.h"
 #include <iostream>
 #include <filesystem>
+#include <vector>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace fs = std::filesystem;
+
+static fs::path FindProjectRoot(int argc, char** argv) {
+    std::vector<fs::path> candidates;
+
+#ifdef __APPLE__
+    char buf[2048] = { 0 };
+    uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) == 0) {
+        std::error_code ec;
+        fs::path p = fs::canonical(buf, ec);
+        if (!ec) candidates.push_back(p.parent_path());
+        else candidates.push_back(fs::path(buf).parent_path());
+    }
+#endif
+
+    if (argc > 0 && argv[0]) {
+        std::error_code ec;
+        fs::path p = fs::canonical(argv[0], ec);
+        if (!ec) candidates.push_back(p.parent_path());
+        else candidates.push_back(fs::path(argv[0]).parent_path());
+    }
+
+    for (const auto& start : candidates) {
+        fs::path p = start;
+        for (int depth = 0; depth < 5; ++depth) {
+            std::error_code ec;
+            if (fs::exists(p / "rom/extracted/default.exe", ec) || fs::exists(p / "rom/extracted", ec)) {
+                return p;
+            }
+            if (p.has_parent_path() && p != p.parent_path()) {
+                p = p.parent_path();
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Direct project directory fallback
+    std::error_code ec;
+    fs::path defaultPath = "/Users/vovavovchok/The Nightmare Before Christmas";
+    if (fs::exists(defaultPath / "rom/extracted", ec)) {
+        return defaultPath;
+    }
+
+    return fs::current_path(ec);
+}
 
 int main(int argc, char** argv) {
     std::cout << "======================================================" << std::endl;
@@ -22,17 +73,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    // 0. Auto-discover repository root from binary location
+    fs::path baseDir = FindProjectRoot(argc, argv);
+    std::cout << "[Main] Project Root: " << baseDir.string() << std::endl;
+
+    std::error_code ec;
+    fs::current_path(baseDir, ec);
+
     // 1. Initialize Virtual File System (VFS)
-    std::string rootDir = "rom/extracted";
-    if (!fs::exists(rootDir)) {
-        rootDir = "rom";
+    std::string rootDir = (baseDir / "rom/extracted").string();
+    if (!fs::exists(rootDir, ec)) {
+        rootDir = (baseDir / "rom").string();
     }
 
     std::cout << "[Main] Initializing VFS with root: " << rootDir << std::endl;
     OogieEngine::Core::VFS::Instance().Initialize(rootDir);
 
     // 2. Initialize and Boot Host Runner
-    std::string exePath = "rom/extracted/default.exe";
+    std::string exePath = (baseDir / "rom/extracted/default.exe").string();
+    if (!fs::exists(exePath, ec)) {
+        exePath = (baseDir / "rom/default.exe").string();
+    }
     auto& host = OogieEngine::Host::OogieHost::Instance();
     if (!host.Initialize(exePath)) {
         std::cerr << "[Main] Failed to initialize Native Host!" << std::endl;
