@@ -139,3 +139,4 @@ void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
 
 } // namespace Rendering
 } // namespace OogieEngine
+

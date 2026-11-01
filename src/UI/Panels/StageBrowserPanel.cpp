@@ -145,3 +145,4 @@ void StageBrowserPanel::Draw(bool* pOpen, const std::function<void(const std::st
 
 } // namespace UI
 } // namespace OogieEngine
+

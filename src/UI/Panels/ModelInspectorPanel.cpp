@@ -101,3 +101,4 @@ void ModelInspectorPanel::Draw(bool* pOpen, SG::StageScene& scene,
 
 } // namespace UI
 } // namespace OogieEngine
+

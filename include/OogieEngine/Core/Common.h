@@ -14,3 +14,4 @@ namespace fs = std::filesystem;
 #define OOGIE_VERSION_MAJOR 1
 #define OOGIE_VERSION_MINOR 0
 #define OOGIE_VERSION_STR "1.0.0"
+

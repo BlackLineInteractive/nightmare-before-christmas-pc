@@ -88,3 +88,4 @@ Texture2D GPUTextureCache::GetTexture(const std::string& name, const std::string
 
 } // namespace Rendering
 } // namespace OogieEngine
+

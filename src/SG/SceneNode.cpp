@@ -101,3 +101,4 @@ Core::BoundingBox SceneNode::GetWorldBoundingBox() const {
 
 } // namespace SG
 } // namespace OogieEngine
+

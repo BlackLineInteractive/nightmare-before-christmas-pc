@@ -92,3 +92,4 @@ void TextureGalleryPanel::Draw(bool* pOpen, const std::string& currentStagePath)
 
 } // namespace UI
 } // namespace OogieEngine
+
