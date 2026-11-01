@@ -75,6 +75,7 @@ Texture2D GPUTextureCache::GetTexture(const std::string& name, const std::string
                 Texture2D tex = LoadTextureFromImage(img);
                 UnloadImage(img);
                 SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
+                SetTextureWrap(tex, TEXTURE_WRAP_REPEAT);
                 cache[name] = tex;
                 return tex;
             }

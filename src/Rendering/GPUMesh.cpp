@@ -31,13 +31,8 @@ bool GPUModel::Upload(const Core::ModelData& cpuData, const std::string& texture
     for (const auto& objData : cpuData.objects) {
         GPUObject gpuObj;
 
-        // Convert Core::Mat4 to Raylib Matrix
-        gpuObj.transform = Matrix{
-            objData.transform.m[0], objData.transform.m[4], objData.transform.m[8],  objData.transform.m[12],
-            objData.transform.m[1], objData.transform.m[5], objData.transform.m[9],  objData.transform.m[13],
-            objData.transform.m[2], objData.transform.m[6], objData.transform.m[10], objData.transform.m[14],
-            objData.transform.m[3], objData.transform.m[7], objData.transform.m[11], objData.transform.m[15]
-        };
+        // Direct copy of Core::Mat4 to Raylib Matrix (both 16 floats column-major)
+        std::memcpy(&gpuObj.transform, objData.transform.m.data(), 16 * sizeof(float));
 
         for (const auto& subData : objData.submeshes) {
             GPUSubMesh gpuSub;
@@ -60,10 +55,11 @@ bool GPUModel::Upload(const Core::ModelData& cpuData, const std::string& texture
 }
 
 void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
+    rlDisableBackfaceCulling();
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(worldTransform));
 
-    const Vector3 lightDir = Vector3Normalize(Vector3{ 0.5f, 0.8f, 0.3f });
+    const Vector3 lightDir = Vector3Normalize(Vector3{ 0.4f, 0.9f, 0.3f });
 
     for (const auto& obj : objects) {
         rlPushMatrix();
@@ -100,9 +96,12 @@ void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
                 rlBegin(RL_TRIANGLES);
                 for (const auto& v : sub.vertices) {
                     switch (mode) {
-                        case RenderMode::Textured:
-                            rlColor4f(v.color.x, v.color.y, v.color.z, v.color.w);
+                        case RenderMode::Textured: {
+                            float dot = std::max(0.35f, v.normal.x * lightDir.x + v.normal.y * lightDir.y + v.normal.z * lightDir.z);
+                            float shade = dot * 0.35f + 0.65f;
+                            rlColor4f(shade, shade, shade, 1.0f);
                             break;
+                        }
                         case RenderMode::VertexColor:
                             rlColor4f(v.color.x, v.color.y, v.color.z, v.color.w);
                             break;
