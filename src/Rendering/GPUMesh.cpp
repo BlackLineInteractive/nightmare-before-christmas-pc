@@ -7,6 +7,78 @@
 namespace OogieEngine {
 namespace Rendering {
 
+static Shader s_alphaShader = { 0 };
+static int s_renderModeLoc = -1;
+
+static void EnsureAlphaShader() {
+    if (s_alphaShader.id > 0) return;
+
+    const char* vs = R"(
+#version 330
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec4 vertexColor;
+in vec3 vertexNormal;
+
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 matNormal;
+
+out vec2 fragTexCoord;
+out vec4 fragColor;
+out vec3 fragNormal;
+
+void main()
+{
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor;
+    fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 0.0)));
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+}
+)";
+
+    const char* fs = R"(
+#version 330
+in vec2 fragTexCoord;
+in vec4 fragColor;
+in vec3 fragNormal;
+
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform int uRenderMode;
+
+out vec4 finalColor;
+
+void main()
+{
+    vec3 lightDir = normalize(vec3(0.4, 0.9, 0.3));
+    float diff = max(dot(fragNormal, lightDir), 0.0);
+    float light = diff * 0.45 + 0.55;
+
+    if (uRenderMode == 0) {
+        vec4 texColor = texture(texture0, fragTexCoord);
+        if (texColor.a < 0.20) discard; // Alpha cutout: discards transparent pixels completely
+        finalColor = vec4(texColor.rgb * colDiffuse.rgb * light, texColor.a * colDiffuse.a);
+    }
+    else if (uRenderMode == 1) {
+        finalColor = vec4(fragColor.rgb * light, 1.0);
+    }
+    else if (uRenderMode == 3) {
+        finalColor = vec4(vec3(light), 1.0);
+    }
+    else if (uRenderMode == 4) {
+        finalColor = vec4(fragNormal * 0.5 + 0.5, 1.0);
+    }
+    else {
+        finalColor = vec4(0.85, 0.85, 0.85, 1.0);
+    }
+}
+)";
+
+    s_alphaShader = LoadShaderFromMemory(vs, fs);
+    s_renderModeLoc = GetShaderLocation(s_alphaShader, "uRenderMode");
+}
+
 GPUModel::~GPUModel() {
     Unload();
 }
@@ -55,11 +127,20 @@ bool GPUModel::Upload(const Core::ModelData& cpuData, const std::string& texture
 }
 
 void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
+    EnsureAlphaShader();
+
     rlDisableBackfaceCulling();
+    rlEnableColorBlend();
+    rlSetBlendMode(RL_BLEND_ALPHA);
+
+    int modeInt = static_cast<int>(mode);
+    if (s_renderModeLoc != -1) {
+        SetShaderValue(s_alphaShader, s_renderModeLoc, &modeInt, SHADER_UNIFORM_INT);
+    }
+
+    BeginShaderMode(s_alphaShader);
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(worldTransform));
-
-    const Vector3 lightDir = Vector3Normalize(Vector3{ 0.4f, 0.9f, 0.3f });
 
     for (const auto& obj : objects) {
         rlPushMatrix();
@@ -95,33 +176,7 @@ void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
             } else {
                 rlBegin(RL_TRIANGLES);
                 for (const auto& v : sub.vertices) {
-                    switch (mode) {
-                        case RenderMode::Textured: {
-                            float dot = std::max(0.35f, v.normal.x * lightDir.x + v.normal.y * lightDir.y + v.normal.z * lightDir.z);
-                            float shade = dot * 0.35f + 0.65f;
-                            rlColor4f(shade, shade, shade, 1.0f);
-                            break;
-                        }
-                        case RenderMode::VertexColor:
-                            rlColor4f(v.color.x, v.color.y, v.color.z, v.color.w);
-                            break;
-                        case RenderMode::FlatShaded: {
-                            float dot = std::max(0.15f, v.normal.x * lightDir.x + v.normal.y * lightDir.y + v.normal.z * lightDir.z);
-                            rlColor4f(dot * 0.85f + 0.15f, dot * 0.85f + 0.15f, dot * 0.85f + 0.15f, 1.0f);
-                            break;
-                        }
-                        case RenderMode::Normals: {
-                            float r = v.normal.x * 0.5f + 0.5f;
-                            float g = v.normal.y * 0.5f + 0.5f;
-                            float b = v.normal.z * 0.5f + 0.5f;
-                            rlColor4f(r, g, b, 1.0f);
-                            break;
-                        }
-                        default:
-                            rlColor4ub(220, 220, 220, 255);
-                            break;
-                    }
-
+                    rlColor4f(v.color.x, v.color.y, v.color.z, v.color.w);
                     rlNormal3f(v.normal.x, v.normal.y, v.normal.z);
                     rlTexCoord2f(v.uv.x, v.uv.y);
                     rlVertex3f(v.pos.x, v.pos.y, v.pos.z);
@@ -134,6 +189,7 @@ void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
 
     rlSetTexture(0);
     rlPopMatrix();
+    EndShaderMode();
 }
 
 } // namespace Rendering

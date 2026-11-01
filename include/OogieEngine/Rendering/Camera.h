@@ -49,6 +49,9 @@ private:
     float moveSpeed = 300.0f;
     float lookSpeed = 0.2f;
 
+    bool isDraggingOrbit = false;
+    bool isDraggingPan = false;
+
     void UpdateOrbit();
     void UpdateFly(float dt);
 };
