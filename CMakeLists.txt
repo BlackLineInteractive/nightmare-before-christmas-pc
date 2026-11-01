@@ -30,6 +30,8 @@ set(IMGUI_SOURCES
 )
 
 set(ENGINE_SOURCES
+    src/Core/VFS.cpp
+    src/Loader/CapcomLZ.cpp
     src/Loader/PodLoader.cpp
     src/Loader/SceneLoader.cpp
     src/Rendering/GPUMesh.cpp
