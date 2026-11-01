@@ -6,3 +6,4 @@ unpacked_stm/
 __pycache__/
 .DS_Store
 .env
+external/*
