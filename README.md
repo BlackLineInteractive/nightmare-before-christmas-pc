@@ -82,6 +82,27 @@ cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 ---
 
+## Native PC Executable Patching (Hardware Dependency Stripper)
+
+To convert the original Xbox `default.xbe` / `default.exe` into a native, standalone Windows PE executable stripped of all console hardware dependencies:
+
+```bash
+# Run binary patcher
+python3 tools/patch_exe.py
+```
+
+### What this accomplishes directly on the binary:
+1. **NV2A GPU Spinlock Neutralization (`0x001dc611`):** Overwrites the hardware register wait loop (`D3D_WaitGPUReady`) with `xor eax, eax; ret`, preventing hangs on systems without NV2A silicon.
+2. **NV2A MMIO Hardware Init Stripping (`0x001dc2d1`):** Removes hardcoded writes to physical address `0xFD000000` (NV2A PCI/PGRAPH registers) and chip ID reads.
+3. **Interrupt Status Register Stripping (`0xFD40014C`):** Replaces hardware register polling at `0x001dbc1d`, `0x001dbe5f`, and `0x001dc00f` with zeroed registers.
+4. **XPP USB Controller Hardware Patching (`0x0025c41f`):** NOPs hardware MMIO writes.
+5. **Standard Windows PE Import Table (`.idata`):** Constructs a full PE Import Directory connecting all 125 Xbox kernel ordinals at VA `0x00260020` directly to `xboxkrnl.dll`.
+6. **Outputs:**
+   - `rom/extracted/default_pc.exe` & `rom/extracted/OogiesRevenge_PC.exe` (Standalone Windows executables).
+   - `rom/extracted/xboxkrnl.dll` (Standard Win32 ordinal thunk library).
+
+---
+
 ## Camera Controls
 
 | Action | Control |
