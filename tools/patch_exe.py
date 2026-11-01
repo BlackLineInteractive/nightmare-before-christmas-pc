@@ -534,3 +534,4 @@ if __name__ == '__main__':
     print(f"  1. {out_exe} (PC executable with patched NV2A & Win32 IAT)")
     print(f"  2. {out_named_exe} (Named launcher)")
     print(f"  3. {out_dll} (Standard Win32 ordinal thunk library)")
+
