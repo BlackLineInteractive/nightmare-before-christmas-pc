@@ -1,4 +1,7 @@
 #include "OogieEngine/SG/SceneNode.h"
+#include <raylib.h>
+#include <rlgl.h>
+#include <algorithm>
 
 namespace OogieEngine {
 namespace SG {
@@ -34,7 +37,29 @@ void SceneNode::Draw(Rendering::RenderMode mode) {
     if (!visible) return;
 
     if (model) {
-        model->Draw(mode, worldTransform);
+        if (blendMode == BlendMode::Additive) {
+            rlDrawRenderBatchActive();
+            rlEnableColorBlend();
+            rlSetBlendMode(RL_BLEND_ADD_COLORS);
+            rlDisableDepthMask();
+            model->Draw(mode, worldTransform, true);
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+            rlSetBlendMode(RL_BLEND_ALPHA);
+        } else if (blendMode == BlendMode::AlphaBlend) {
+            rlDrawRenderBatchActive();
+            rlEnableColorBlend();
+            rlSetBlendMode(RL_BLEND_ALPHA);
+            rlDisableDepthMask();
+            model->Draw(mode, worldTransform, false);
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+        } else {
+            rlEnableColorBlend();
+            rlSetBlendMode(RL_BLEND_ALPHA);
+            rlEnableDepthMask();
+            model->Draw(mode, worldTransform, false);
+        }
     }
 
     for (auto& child : children) {

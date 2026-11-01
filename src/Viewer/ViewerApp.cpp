@@ -175,6 +175,24 @@ void ViewerApp::RenderMenuBar() {
                 camera.SetMode(Rendering::CameraMode::Fly);
             }
             ImGui::Separator();
+            bool invPitch = camera.GetInvertPitch();
+            if (ImGui::MenuItem("Invert Pitch (Vertical)", nullptr, invPitch)) {
+                camera.SetInvertPitch(!invPitch);
+            }
+            bool invYaw = camera.GetInvertYaw();
+            if (ImGui::MenuItem("Invert Yaw (Horizontal)", nullptr, invYaw)) {
+                camera.SetInvertYaw(!invYaw);
+            }
+            ImGui::Separator();
+            float speed = camera.GetMoveSpeed();
+            if (ImGui::SliderFloat("Fly Speed", &speed, 50.0f, 3000.0f, "%.0f")) {
+                camera.SetMoveSpeed(speed);
+            }
+            float sens = camera.GetOrbitSensitivity();
+            if (ImGui::SliderFloat("Orbit Sens", &sens, 0.05f, 1.5f, "%.2f")) {
+                camera.SetOrbitSensitivity(sens);
+            }
+            ImGui::Separator();
             ImGui::TextDisabled("View Clipping:");
             ImGui::SliderFloat("##FarClip", &state.farClip, 2000.0f, 200000.0f, "Far: %.0f units");
             ImGui::Separator();
@@ -229,7 +247,7 @@ void ViewerApp::RenderUI() {
             ImGui::TextDisabled("Camera: [%.0f, %.0f, %.0f] | Mode: %s",
                                 camera.GetPosition().x, camera.GetPosition().y, camera.GetPosition().z,
                                 camera.GetMode() == Rendering::CameraMode::Orbit ? "Orbit" : "Fly");
-            ImGui::TextDisabled("Controls: RMB Orbit/Look | MMB/Shift+RMB Pan | Scroll Zoom | C Toggle Cam");
+            ImGui::TextDisabled("Controls: LMB Orbit | Hold RMB + WASD Fly | MMB / Shift+LMB Pan | Wheel Zoom");
         }
         ImGui::End();
     }

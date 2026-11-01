@@ -9,6 +9,7 @@ namespace Rendering {
 
 static Shader s_alphaShader = { 0 };
 static int s_renderModeLoc = -1;
+static int s_isAdditiveLoc = -1;
 
 static void EnsureAlphaShader() {
     if (s_alphaShader.id > 0) return;
@@ -46,6 +47,7 @@ in vec3 fragNormal;
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform int uRenderMode;
+uniform int uIsAdditive;
 
 out vec4 finalColor;
 
@@ -57,8 +59,17 @@ void main()
 
     if (uRenderMode == 0) {
         vec4 texColor = texture(texture0, fragTexCoord);
-        if (texColor.a < 0.20) discard; // Alpha cutout: discards transparent pixels completely
-        finalColor = vec4(texColor.rgb * colDiffuse.rgb * light, texColor.a * colDiffuse.a);
+        if (uIsAdditive == 1) {
+            // Additive mode for spotlights, glows, glares: black adds nothing
+            // Modulate with vertex color so perimeter vertices at (0,0,0) fade seamlessly to black
+            vec3 vCol = length(fragColor.rgb) > 0.01 ? fragColor.rgb : vec3(1.0);
+            vec3 addColor = texColor.rgb * vCol;
+            addColor = max(addColor - vec3(0.04), vec3(0.0));
+            finalColor = vec4(addColor, 1.0);
+        } else {
+            if (texColor.a < 0.20) discard; // Alpha cutout: discards transparent pixels completely
+            finalColor = vec4(texColor.rgb * colDiffuse.rgb * light, texColor.a * colDiffuse.a);
+        }
     }
     else if (uRenderMode == 1) {
         finalColor = vec4(fragColor.rgb * light, 1.0);
@@ -77,6 +88,7 @@ void main()
 
     s_alphaShader = LoadShaderFromMemory(vs, fs);
     s_renderModeLoc = GetShaderLocation(s_alphaShader, "uRenderMode");
+    s_isAdditiveLoc = GetShaderLocation(s_alphaShader, "uIsAdditive");
 }
 
 GPUModel::~GPUModel() {
@@ -126,16 +138,20 @@ bool GPUModel::Upload(const Core::ModelData& cpuData, const std::string& texture
     return true;
 }
 
-void GPUModel::Draw(RenderMode mode, Matrix worldTransform) const {
+void GPUModel::Draw(RenderMode mode, Matrix worldTransform, bool isAdditive) const {
     EnsureAlphaShader();
 
     rlDisableBackfaceCulling();
     rlEnableColorBlend();
-    rlSetBlendMode(RL_BLEND_ALPHA);
 
     int modeInt = static_cast<int>(mode);
     if (s_renderModeLoc != -1) {
         SetShaderValue(s_alphaShader, s_renderModeLoc, &modeInt, SHADER_UNIFORM_INT);
+    }
+
+    int addInt = isAdditive ? 1 : 0;
+    if (s_isAdditiveLoc != -1) {
+        SetShaderValue(s_alphaShader, s_isAdditiveLoc, &addInt, SHADER_UNIFORM_INT);
     }
 
     BeginShaderMode(s_alphaShader);

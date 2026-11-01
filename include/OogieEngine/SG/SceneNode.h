@@ -36,6 +36,15 @@ public:
     void RemoveChild(std::shared_ptr<SceneNode> child);
     const std::vector<std::shared_ptr<SceneNode>>& GetChildren() const { return children; }
 
+    enum class BlendMode {
+        Opaque = 0,
+        AlphaBlend,
+        Additive
+    };
+
+    BlendMode GetBlendMode() const { return blendMode; }
+    void SetBlendMode(BlendMode mode) { blendMode = mode; }
+
     virtual void Update(const Matrix& parentWorld = MatrixIdentity());
     virtual void Draw(Rendering::RenderMode mode);
 
@@ -44,6 +53,7 @@ public:
 private:
     std::string name;
     bool visible = true;
+    BlendMode blendMode = BlendMode::Opaque;
     Matrix localTransform = MatrixIdentity();
     Matrix worldTransform = MatrixIdentity();
     std::shared_ptr<Rendering::GPUModel> model;

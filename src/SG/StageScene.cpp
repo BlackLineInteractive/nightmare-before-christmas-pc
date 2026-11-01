@@ -52,6 +52,7 @@ bool StageScene::LoadStage(const std::string& stageDir) {
 
     // 2. Discover models from bg_list.txt or directory
     std::vector<std::string> modelFileNames;
+    std::unordered_map<std::string, std::string> modelFlags;
     std::string bgListPath = sceneDir + "/bg_list.txt";
 
     if (fs::exists(bgListPath)) {
@@ -59,6 +60,7 @@ bool StageScene::LoadStage(const std::string& stageDir) {
         if (Loader::SceneLoader::LoadSceneList(bgListPath, sceneObjects)) {
             for (const auto& obj : sceneObjects) {
                 modelFileNames.push_back(obj.modelName);
+                modelFlags[obj.modelName] = obj.flags;
             }
         }
     }
@@ -108,6 +110,20 @@ bool StageScene::LoadStage(const std::string& stageDir) {
         if (gpuModel) {
             auto node = std::make_shared<SceneNode>(name);
             node->SetModel(gpuModel);
+
+            std::string flags = modelFlags[name];
+            if (flags.find("ADDZERO") != std::string::npos || flags.find("ALPHA") != std::string::npos ||
+                flags.find("Z_OFF") != std::string::npos || name.find("shadow") != std::string::npos ||
+                name.find("kiri") != std::string::npos || name.find("kumo") != std::string::npos) {
+                node->SetBlendMode(SceneNode::BlendMode::AlphaBlend);
+            } else if (flags.find("ADD100") != std::string::npos || flags.find("GLARE") != std::string::npos ||
+                       flags == "ADD" || name.find("spot") != std::string::npos ||
+                       name.find("hikari") != std::string::npos || name.find("glare") != std::string::npos) {
+                node->SetBlendMode(SceneNode::BlendMode::Additive);
+            } else {
+                node->SetBlendMode(SceneNode::BlendMode::Opaque);
+            }
+
             rootNode->AddChild(node);
             modelNodes.push_back(node);
 
@@ -136,8 +152,20 @@ void StageScene::Update(float dt) {
 }
 
 void StageScene::Draw(Rendering::RenderMode mode) {
-    if (rootNode) {
-        rootNode->Draw(mode);
+    if (!rootNode) return;
+
+    // Pass 1: Opaque & cutout geometry (writes to depth buffer)
+    for (auto& node : modelNodes) {
+        if (node->GetBlendMode() == SceneNode::BlendMode::Opaque) {
+            node->Draw(mode);
+        }
+    }
+
+    // Pass 2: Blended & Additive elements (spotlights, light cones, shadows)
+    for (auto& node : modelNodes) {
+        if (node->GetBlendMode() != SceneNode::BlendMode::Opaque) {
+            node->Draw(mode);
+        }
     }
 }
 

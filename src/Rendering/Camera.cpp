@@ -92,11 +92,12 @@ void ViewerCamera::UpdateFly(float dt) {
     camera.position = Vector3Add(camera.position, delta);
     camera.target = Vector3Add(camera.target, delta);
 
-    // Mouse look when right mouse is held
-    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) || IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Vector2 mouseDelta = GetMouseDelta();
-        float yaw = -mouseDelta.x * lookSpeed * DEG2RAD_F;
-        float pitch = -mouseDelta.y * lookSpeed * DEG2RAD_F;
+        float yawSign = invertYaw ? -1.0f : 1.0f;
+        float pitchSign = invertPitch ? -1.0f : 1.0f;
+        float yaw = -yawSign * mouseDelta.x * lookSpeed * DEG2RAD_F;
+        float pitch = -pitchSign * mouseDelta.y * lookSpeed * DEG2RAD_F;
 
         Matrix rot = MatrixMultiply(MatrixRotate(up, yaw), MatrixRotate(right, pitch));
         Vector3 newForward = Vector3Transform(forward, rot);
@@ -107,78 +108,127 @@ void ViewerCamera::UpdateFly(float dt) {
 void ViewerCamera::Update(float dt) {
     bool imguiActive = ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
 
-    if (mode == CameraMode::Orbit) {
-        // Zoom: smooth wheel or +/- keys
-        if (!imguiActive) {
+    // Smooth wheel zoom when not flying and not on ImGui
+    if (!imguiActive && !isDraggingRMBFly) {
+        float wheel = GetMouseWheelMove();
+        if (wheel != 0.0f) {
+            orbitDistance *= (1.0f - wheel * 0.12f);
+            orbitDistance = std::clamp(orbitDistance, 5.0f, 100000.0f);
+            UpdateOrbit();
+        }
+    }
+
+    // Keyboard zoom fallback
+    if (!ImGui::GetIO().WantCaptureKeyboard) {
+        if (IsKeyDown(KEY_EQUAL)) { orbitDistance *= 0.98f; UpdateOrbit(); }
+        if (IsKeyDown(KEY_MINUS)) { orbitDistance *= 1.02f; UpdateOrbit(); }
+    }
+
+    bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+
+    // Detect start of mouse drags when clicking in viewport outside ImGui
+    if (!imguiActive) {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            isDraggingRMBFly = true;
+        } else if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) || (shiftHeld && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))) {
+            isDraggingPan = true;
+        } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            isDraggingOrbit = true;
+        }
+    }
+
+    // 1. Right-Click Fly Navigation (Unreal/Unity style)
+    if (isDraggingRMBFly) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
+            // Scroll wheel adjusts fly move speed while holding RMB
             float wheel = GetMouseWheelMove();
             if (wheel != 0.0f) {
-                orbitDistance *= (1.0f - wheel * 0.12f);
-                orbitDistance = std::clamp(orbitDistance, 5.0f, 100000.0f);
-                UpdateOrbit();
+                moveSpeed *= (1.0f + wheel * 0.2f);
+                moveSpeed = std::clamp(moveSpeed, 20.0f, 10000.0f);
             }
+
+            Vector2 mouseDelta = GetMouseDelta();
+            Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, camera.up));
+            Vector3 up = camera.up;
+
+            float yawSign = invertYaw ? -1.0f : 1.0f;
+            float pitchSign = invertPitch ? -1.0f : 1.0f;
+            float yaw = -yawSign * mouseDelta.x * lookSpeed * DEG2RAD_F;
+            float pitch = -pitchSign * mouseDelta.y * lookSpeed * DEG2RAD_F;
+
+            Matrix rot = MatrixMultiply(MatrixRotate(up, yaw), MatrixRotate(right, pitch));
+            Vector3 newForward = Vector3Transform(forward, rot);
+            camera.target = Vector3Add(camera.position, newForward);
+
+            // WASD fly movement
+            float speed = moveSpeed * dt;
+            if (shiftHeld) speed *= 2.5f;
+
+            Vector3 flyDelta = { 0, 0, 0 };
+            if (IsKeyDown(KEY_W)) flyDelta = Vector3Add(flyDelta, Vector3Scale(newForward, speed));
+            if (IsKeyDown(KEY_S)) flyDelta = Vector3Subtract(flyDelta, Vector3Scale(newForward, speed));
+            if (IsKeyDown(KEY_D)) flyDelta = Vector3Add(flyDelta, Vector3Scale(right, speed));
+            if (IsKeyDown(KEY_A)) flyDelta = Vector3Subtract(flyDelta, Vector3Scale(right, speed));
+            if (IsKeyDown(KEY_E)) flyDelta = Vector3Add(flyDelta, Vector3Scale(up, speed));
+            if (IsKeyDown(KEY_Q)) flyDelta = Vector3Subtract(flyDelta, Vector3Scale(up, speed));
+
+            camera.position = Vector3Add(camera.position, flyDelta);
+            camera.target = Vector3Add(camera.target, flyDelta);
+        } else {
+            isDraggingRMBFly = false;
+            // Sync orbit parameters to current view
+            orbitTarget = camera.target;
+            Vector3 diff = Vector3Subtract(camera.position, orbitTarget);
+            orbitDistance = Vector3Length(diff);
+            if (orbitDistance < 5.0f) orbitDistance = 50.0f;
+            orbitYaw = atan2f(diff.x, diff.z) * (180.0f / 3.14159265f);
+            orbitPitch = asinf(std::clamp(diff.y / orbitDistance, -0.99f, 0.99f)) * (180.0f / 3.14159265f);
         }
+    }
 
-        // Keyboard zoom fallback
-        if (!ImGui::GetIO().WantCaptureKeyboard) {
-            if (IsKeyDown(KEY_EQUAL)) { orbitDistance *= 0.98f; UpdateOrbit(); }
-            if (IsKeyDown(KEY_MINUS)) { orbitDistance *= 1.02f; UpdateOrbit(); }
+    // 2. Middle-Click or Shift+LMB Pan
+    if (isDraggingPan) {
+        bool middleDown = IsMouseButtonDown(MOUSE_BUTTON_MIDDLE);
+        bool shiftLmbDown = shiftHeld && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+
+        if (middleDown || shiftLmbDown) {
+            Vector2 delta = GetMouseDelta();
+            Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+            Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, camera.up));
+            Vector3 up = Vector3Normalize(Vector3CrossProduct(right, forward));
+
+            float panSpeed = orbitDistance * 0.0012f;
+            Vector3 pan = Vector3Add(
+                Vector3Scale(right, -delta.x * panSpeed),
+                Vector3Scale(up, delta.y * panSpeed)
+            );
+            orbitTarget = Vector3Add(orbitTarget, pan);
+            UpdateOrbit();
+        } else {
+            isDraggingPan = false;
         }
+    }
 
-        bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    // 3. Left-Click Turntable Orbit
+    if (isDraggingOrbit) {
+        if (!shiftHeld && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 delta = GetMouseDelta();
+            float yawSign = invertYaw ? -1.0f : 1.0f;
+            float pitchSign = invertPitch ? -1.0f : 1.0f;
 
-        // Detect start of mouse drag outside ImGui panels
-        if (!imguiActive) {
-            if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) || (shiftHeld && (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)))) {
-                isDraggingPan = true;
-            } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-                isDraggingOrbit = true;
-            }
+            orbitYaw -= yawSign * delta.x * orbitSensitivity;
+            orbitPitch += pitchSign * delta.y * orbitSensitivity;
+            orbitPitch = std::clamp(orbitPitch, -89.0f, 89.0f);
+            UpdateOrbit();
+        } else {
+            isDraggingOrbit = false;
         }
+    }
 
-        // Pan handler (Middle click OR Shift+Left/Right Click)
-        if (isDraggingPan) {
-            bool middleDown = IsMouseButtonDown(MOUSE_BUTTON_MIDDLE);
-            bool shiftClickDown = shiftHeld && (IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsMouseButtonDown(MOUSE_BUTTON_RIGHT));
-
-            if (middleDown || shiftClickDown) {
-                Vector2 delta = GetMouseDelta();
-                Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-                Vector3 right = Vector3Normalize(Vector3CrossProduct(forward, camera.up));
-                Vector3 up = Vector3Normalize(Vector3CrossProduct(right, forward));
-
-                float panSpeed = orbitDistance * 0.0012f;
-                // Move target with mouse movement
-                Vector3 pan = Vector3Add(
-                    Vector3Scale(right, -delta.x * panSpeed),
-                    Vector3Scale(up, delta.y * panSpeed)
-                );
-                orbitTarget = Vector3Add(orbitTarget, pan);
-                UpdateOrbit();
-            } else {
-                isDraggingPan = false;
-            }
-        }
-
-        // Orbit handler (Left click drag or Right click drag)
-        if (isDraggingOrbit) {
-            bool lmbDown = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-            bool rmbDown = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
-
-            if (!shiftHeld && (lmbDown || rmbDown)) {
-                Vector2 delta = GetMouseDelta();
-                orbitYaw -= delta.x * 0.35f;
-                orbitPitch -= delta.y * 0.35f; // Dragging up looks down from above
-                orbitPitch = std::clamp(orbitPitch, -89.0f, 89.0f);
-                UpdateOrbit();
-            } else {
-                isDraggingOrbit = false;
-            }
-        }
-    } else {
-        // Fly mode
-        if (!imguiActive) {
-            UpdateFly(dt);
-        }
+    // Freecam mode if explicitly toggled
+    if (mode == CameraMode::Fly && !isDraggingRMBFly && !imguiActive) {
+        UpdateFly(dt);
     }
 }
 

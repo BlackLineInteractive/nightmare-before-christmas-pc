@@ -162,10 +162,11 @@ bool PodLoader::Load(const std::string &podPath, Core::ModelData &outModel,
         // standard OpenGL Y-up
         v.pos = {p[0], -p[1], p[2]};
         v.uv = {uv[0], uv[1]};
-        v.color = {std::clamp(col[0] / 255.0f, 0.0f, 1.0f),
-                   std::clamp(col[1] / 255.0f, 0.0f, 1.0f),
-                   std::clamp(col[2] / 255.0f, 0.0f, 1.0f),
-                   std::clamp((col[3] * 2.0f) / 255.0f, 0.0f, 1.0f)};
+        // Capcom RD3 / PS2 GS vertex colors range 0..128 (where 128 = 1.0)
+        v.color = {std::clamp(col[0] / 128.0f, 0.0f, 1.0f),
+                   std::clamp(col[1] / 128.0f, 0.0f, 1.0f),
+                   std::clamp(col[2] / 128.0f, 0.0f, 1.0f),
+                   std::clamp(col[3] / 128.0f, 0.0f, 1.0f)};
         stripVerts[vi] = v;
         stripFlags[vi] = flag;
       }

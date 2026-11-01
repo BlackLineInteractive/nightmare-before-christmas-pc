@@ -40,7 +40,7 @@ public:
     bool Upload(const Core::ModelData& cpuData, const std::string& textureDir = "");
     void Unload();
 
-    void Draw(RenderMode mode, Matrix worldTransform = MatrixIdentity()) const;
+    void Draw(RenderMode mode, Matrix worldTransform = MatrixIdentity(), bool isAdditive = false) const;
 
     const Core::BoundingBox& GetBoundingBox() const { return bbox; }
     const std::string& GetName() const { return name; }
