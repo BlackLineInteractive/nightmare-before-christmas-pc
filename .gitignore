@@ -1,0 +1,4 @@
+rom/
+
+.DS_Store
+.env
