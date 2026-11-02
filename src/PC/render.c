@@ -65,13 +65,6 @@ static HWND   g_hwnd;
 static u32    g_width = 640, g_height = 480;
 static u32    g_frames;
 static u32    g_stat_draw_up, g_stat_draw, g_stat_tex, g_stat_clear, g_stat_skipped;
-static u32    g_stat_rt, g_stat_copy, g_stat_xthread, g_stat_swaps_empty;
-static u32    g_swap_tid, g_frame_draws;   /* thread that calls Swap; draws since the last Swap */
-static void stat_draw_thread(void)
-{
-    g_frame_draws++;
-    if (g_swap_tid && GetCurrentThreadId() != g_swap_tid) g_stat_xthread++;
-}
 static void   tex_invalidate(const void* res);
 static void   default_xbox_state(void);
 static void   maybe_screenshot(void);
@@ -164,7 +157,6 @@ HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32
 HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, float z, u32 stencil)
 {
     g_stat_clear++;
-    stat_draw_thread();
     if (!g_dev) return 0;
     u32 f = 0;
     if (flags & 0xF0) f |= D3DCLEAR_TARGET;
@@ -183,9 +175,6 @@ u32 WINAPI pc_Swap(u32 flags)
         VCALL(g_dev, DEV_BeginScene, PFN_Scene)(g_dev);
     }
     pump();
-    g_swap_tid = GetCurrentThreadId();
-    if (!g_frame_draws) g_stat_swaps_empty++;
-    g_frame_draws = 0;
     if ((++g_frames & 63) == 1) {
         log_hex("[pc] frame", g_frames);
         log_hex("[pc]   DrawVerticesUP", g_stat_draw_up);
@@ -193,10 +182,6 @@ u32 WINAPI pc_Swap(u32 flags)
         log_hex("[pc]   textures", g_stat_tex);
         log_hex("[pc]   clears", g_stat_clear);
         log_hex("[pc]   skipped (vertex shader)", g_stat_skipped);
-        log_hex("[pc]   SetRenderTarget (offscreen)", g_stat_rt);
-        log_hex("[pc]   CopyRects", g_stat_copy);
-        log_hex("[pc]   draws off the Swap thread", g_stat_xthread);
-        log_hex("[pc]   Swaps with nothing drawn", g_stat_swaps_empty);
     }
     return 0;
 }
@@ -287,8 +272,8 @@ void WINAPI pc_ResourceBlockUntilNotBusy(XRes* r) { }
 XRes* WINAPI pc_GetBackBuffer2(s32 index) { return &g_backbuffer; }
 XRes* WINAPI pc_GetRenderTarget2(void) { return &g_backbuffer; }
 XRes* WINAPI pc_GetDepthStencilSurface2(void) { return &g_depth; }
-HRESULT WINAPI pc_SetRenderTarget(XRes* rt, XRes* zs) { if (rt && rt != &g_backbuffer) g_stat_rt++; return 0; }
-HRESULT WINAPI pc_CopyRects(XRes* src, const void* srcRects, u32 n, XRes* dst, const void* pts) { g_stat_copy++; return 0; }
+HRESULT WINAPI pc_SetRenderTarget(XRes* rt, XRes* zs) { return 0; }
+HRESULT WINAPI pc_CopyRects(XRes* src, const void* srcRects, u32 n, XRes* dst, const void* pts) { return 0; }
 
 /* SetTexture(Stage, pTexture) */
 HRESULT WINAPI pc_SetTexture(u32 stage, XRes* t) { if (stage < 4) g_textures[stage] = t; return 0; }

@@ -387,7 +387,6 @@ static void draw_streams(u32 prim, u32 start, u32 count)
 void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
-    stat_draw_thread();
     if (!g_dev || !data || !count) return;
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
@@ -405,7 +404,6 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
 {
     g_stat_draw++;
-    stat_draw_thread();
     if (!g_dev || !count) return;
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();

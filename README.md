@@ -3,8 +3,9 @@
 ### Native C++17 Reverse-Engineering Toolkit & PC Reimplementation Engine
 
 [![C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
-[![Graphics](https://img.shields.io/badge/Renderer-OpenGL%203.3%20%2F%20Raylib-orange.svg)]()
+[![Platform](https://img.shields.io/badge/Viewer-macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/PC%20port-Windows%20%7C%20Wine-lightgrey.svg)]()
+[![Graphics](https://img.shields.io/badge/Renderer-OpenGL%20(viewer)%20%2F%20Direct3D%209%20(port)-orange.svg)]()
 [![UI](https://img.shields.io/badge/GUI-Dear%20ImGui-purple.svg)](https://github.com/ocornut/imgui)
 
 <p align="center">
@@ -59,9 +60,11 @@ Topics covered:
 
 ### Prerequisites
 
-- **C++17 Compiler:** Clang 14+ (macOS Xcode), GCC 10+, or MSVC 2019+
-- **CMake:** Version 3.20 or newer
-- **Raylib:** Version 5.0+ (`brew install raylib` on macOS)
+- **C++17 Compiler:** Clang 14+ (macOS Xcode)
+- **CMake:** Version 3.15 or newer
+- **Raylib:** Version 5.0+ (`brew install raylib`; found through `pkg-config`)
+
+> The viewer currently builds on **macOS only**: `CMakeLists.txt` links the Cocoa / IOKit / CoreVideo / OpenGL frameworks.
 
 ### Build Instructions
 
@@ -97,17 +100,36 @@ Goal: run the **original game code** on PC by patching the executable itself —
 python3 tools/build_flat_pe.py
 ```
 
-Produces `rom/extracted/default_pc.exe`: the XBE mapped 1:1 at its native base `0x00010000` as a single PE section, so every absolute address in the game code stays valid. Patches applied on the image:
+Needs the game's own `rom/extracted/default.xbe` and a `clang` with the x86 backend (Apple clang works); the PC replacement code in `src/PC/` is compiled to an i386 COFF object and linked into the image.
 
-1. **NV2A spin-wait (`0x001dc611`):** `D3D_WaitGPUReady` → `xor eax, eax; ret`.
-2. **NV2A device init (`0x001dc2d1`):** stripped.
-3. **NV2A chip detection (`0x001dc2fc`):** returns a fixed chip ID.
-4. **PMC interrupt status reads (`0xFD40014C`)** at `0x001dbc1d`, `0x001dbe5f`, `0x001dc00f`: zeroed.
-5. **XPP USB MMIO write (`0x0025c41f`):** NOPed.
-6. **KPCR accesses (`fs:[0x20]`, `fs:[0x28]`):** redirected to a dummy block.
-7. **Boot:** XBE entry (`0x001bf647`) jumps straight to the RD3 main thread routine (`0x001bf5d3`).
+Produces `rom/extracted/default_pc.exe`: the XBE mapped 1:1 at its native base `0x00010000` as a single PE section, so every absolute address in the game code stays valid. What is done to the image:
 
-> **Status:** the PE still imports the 125 Xbox kernel ordinals (`xboxkrnl.dll`), which does not exist on Windows, so the exe does **not** start yet. See *Porting route* below.
+1. **NV2A hardware access patched out:** `D3D_WaitGPUReady` spin-wait (`0x001dc611`), device init (`0x001dc2d1`), chip detection (`0x001dc2fc`), PMC interrupt status reads (`0xFD40014C`) at `0x001dbc1d` / `0x001dbe5f` / `0x001dc00f`, XPP USB MMIO write (`0x0025c41f`).
+2. **XAPI → Windows** ([`tools/xapi_port.py`](tools/xapi_port.py)): 50 XAPI functions jump to their `kernel32.dll` twins, 7 have small replacements, KPCR / TLS accesses use the Windows TEB, `D:\` and the other drive paths point at the game folder. Kernel thunks still used by LIBC go to `ntdll` / `kernel32`; any other kernel ordinal is a trap that logs its caller and exits.
+3. **Xbox libraries → `src/PC/`** ([`tools/pc_render.py`](tools/pc_render.py)): D3D8 → Direct3D 9 (`render.c`, `draw.c`; the game's NV2A vertex programs are translated to HLSL by [`tools/nv2a_vsh.py`](tools/nv2a_vsh.py)), XPP → XInput + keyboard (`input.c`), contiguous memory → a 64 MB pool mapped at `0x80000000` / `0xF0000000` (`memory.c`), XACT / DirectSound → silent stubs (`audio.c`).
+4. **Boot:** a new entry point runs the C runtime start-up (`_rtinit`, `_cinit`) and then the game's main (`0x001aef10`).
+
+The only imports are Windows DLLs (`kernel32`, `ntdll`, `user32`, `d3d9`, `d3dcompiler_47`, `xinput9_1_0`), so there is no `xboxkrnl.dll`.
+
+> **Status:** the exe starts on Windows and under Wine on macOS, runs the game's boot code and shows the *Now Loading* screen with the animated Jack. There is no sound yet (XACT is stubbed), and the render-target / `CopyRects` / scissor calls are still no-ops.
+
+### Running the port
+
+Run it from `rom/extracted/` so the game finds its files:
+
+```bash
+cd rom/extracted && wine default_pc.exe
+```
+
+Debug switches (environment variables):
+
+| Variable | Effect |
+| :--- | :--- |
+| `PC_SHOT=<n>` | Save the back buffer to `shot_<frame>.bmp` at frames *n*, 3*n* and 6*n* (**F12** saves one at any time) |
+| `PC_DUMPTEX=1` | Write every texture the renderer uploads to `tex_<header address>.bin` (20-byte Xbox resource header + data) |
+| `PC_FLAT=1` / `2` | Draw with vertex colour only / texture × vertex colour, ignoring the game's render state |
+
+Every 64 frames the renderer logs draw, texture and clear counts to stdout, and a watchdog thread logs where each game thread is every 8 seconds.
 
 ### Locate Xbox SDK library functions
 
@@ -125,11 +147,11 @@ Static analysis shows **the game code itself (`0x12000`–`0x1A0000`) never call
 | Library | Location | Kernel call sites | Replacement |
 | :--- | :--- | ---: | :--- |
 | XAPI + LIBC | `.text` `0x1A0000`–`0x1D22A8` | 320 | XAPI is a Win32 subset → jump to the same function in Windows `kernel32.dll` |
-| D3D8 | `D3D` | 37 | own renderer |
-| DirectSound | `DSOUND` | 186 | own audio |
-| XACT | `XACTENG` | 140 | own audio |
-| XPP (gamepad) | `XPP` | 160 | own input |
-| WMA decoder | `WMADEC` | 13 | own audio |
+| D3D8 | `D3D` | 37 | Direct3D 9 renderer (`src/PC/render.c`, `draw.c`, `vshader.c`) |
+| DirectSound | `DSOUND` | 186 | audio, not yet (stubbed) |
+| XACT | `XACTENG` | 140 | audio, not yet (stubbed in `src/PC/audio.c`) |
+| XPP (gamepad) | `XPP` | 160 | XInput + keyboard (`src/PC/input.c`) |
+| WMA decoder | `WMADEC` | 13 | audio, not yet |
 
 So the Xbox kernel can be dropped entirely: XAPI functions become direct jumps into Windows, `D:\` paths are pointed at the game folder, XAPI start-up (`XapiInitProcess`, partition checks, cache drive) is skipped, and D3D / DSound / XACT / XPP are swapped for our renderer, audio and input.
 
@@ -163,6 +185,7 @@ So the Xbox kernel can be dropped entirely: XAPI functions become direct jumps i
 │   ├── UI/                  # Panels (StageBrowser, ModelInspector, TextureGallery, Dialogue)
 │   └── Viewer/              # Application State & ViewerApp
 ├── src/                     # C++ Implementation Files
+│   └── PC/                  # C replacements for the Xbox libraries, linked into default_pc.exe
 ├── docs/                    # Reverse-Engineering Specifications & Documentation
 ├── rom/
 │   ├── extracted/           # 100% Unpacked Xbox Disc (ISO payload, default.xbe)
@@ -170,7 +193,10 @@ So the Xbox kernel can be dropped entirely: XAPI functions become direct jumps i
 └── tools/
     ├── capcom_tool.py       # Bitstream LZ & @STM Extraction Utility
     ├── structure_stm.py     # Stage Structuring & Catalog Generation Tool
-    ├── build_flat_pe.py     # default.xbe -> flat 1:1 PE + hardware patches
+    ├── build_flat_pe.py     # default.xbe -> default_pc.exe (flat 1:1 PE, patches, src/PC linked in)
+    ├── xapi_port.py         # XAPI -> kernel32, kernel thunks, paths, KPCR, import table
+    ├── pc_render.py         # Xbox D3D8 / XPP / XACT / memory entry points -> src/PC functions
+    ├── nv2a_vsh.py          # NV2A vertex programs -> HLSL
     └── xbsymscan.py         # Locate XDK library functions via XbSymbolDatabase
 ```
 
