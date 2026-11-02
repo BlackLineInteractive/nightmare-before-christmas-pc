@@ -14,7 +14,9 @@ GAME=rom/extracted
 find_wine() {
     [ -n "$WINE" ] && { echo "$WINE"; return; }
     command -v wine >/dev/null 2>&1 && { echo wine; return; }
-    for app in "/Applications/Wine Devel.app" "/Applications/Wine Stable.app" "/Applications/Wine Staging.app"; do
+    for app in "/Applications/Wine Devel.app" "/Applications/Wine Stable.app" "/Applications/Wine Staging.app" \
+               "$HOME/Applications/Wine Devel.app" "$HOME/Applications/Wine Stable.app" \
+               "/private/tmp/wine/Wine Devel.app" "/private/tmp/wine/Wine Stable.app"; do
         [ -x "$app/Contents/Resources/wine/bin/wine" ] && { echo "$app/Contents/Resources/wine/bin/wine"; return; }
     done
     echo "wine not found: install Wine (macOS: brew install --cask wine@devel) or set WINE=/path/to/wine" >&2
@@ -35,7 +37,7 @@ run)
     cd "$GAME"
     case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) ./default_pc.exe ;;
-    *) "$(find_wine)" default_pc.exe ;;
+    *) wine=$(find_wine) || exit 1; "$wine" default_pc.exe ;;
     esac
     ;;
 clean)

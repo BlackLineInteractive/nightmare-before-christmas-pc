@@ -220,6 +220,7 @@ typedef struct Cue {
   int paused;
   u32 t;   /* samples played (48 kHz) */
   s32 delay; /* samples to wait before starting (lines sound up with the picture) */
+  int ended; /* its CUESTOP notification went out */
   s32 vol; /* the sound's volume */
   Track tr[4];
   u32 ntr;
@@ -416,7 +417,32 @@ static void cue_event_loop(Cue *c) {
   }
 }
 
+/* Notifications. The game registers SOUNDCUESTOP (type 1) for single cue
+ * instances (chapter cards, demos) and waits for it before going on. The
+ * description is +0 WORD type, +2 WORD flags, +4 pSoundBank, +8 cue index,
+ * +12 pSoundCue; a notification carries the same fields. */
+#define XACTNOTIFICATIONTYPE_SOUNDCUESTOP 1
+typedef struct { u16 type, flags; void *sb; u32 index; void *cue; } Note;
+static Note g_reg[32], g_note[64];
+static u32 g_note_head, g_note_tail;
+
+static void cue_notify_stop(Cue *c) {
+  if (c->ended)
+    return;
+  c->ended = 1;
+  for (int i = 0; i < 32; i++) {
+    Note *r = &g_reg[i];
+    if (r->type != XACTNOTIFICATIONTYPE_SOUNDCUESTOP)
+      continue;
+    if (r->cue ? r->cue != c : (r->sb != c->sb || (r->index != 0xFFFFFFFF && r->index != c->index)))
+      continue;
+    Note n = { XACTNOTIFICATIONTYPE_SOUNDCUESTOP, 0, c->sb, c->index, c };
+    g_note[g_note_tail++ & 63] = n;
+  }
+}
+
 static void cue_stop(Cue *c) {
+  cue_notify_stop(c);
   for (u32 i = 0; i < c->ntr; i++)
     if (c->tr[i].v && c->tr[i].v->cue == c)
       voice_stop(c->tr[i].v);
@@ -464,6 +490,7 @@ static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
   }
   memset(c, 0, sizeof *c);
   c->magic = 0x20455543;
+  c->ended = 0;
   c->delay = g_delay;
   c->sb = sb;
   c->index = index;
@@ -565,6 +592,9 @@ static void mix(s16 *out) {
       g_cue[i].t += MIX_FRAMES;
       cue_event_loop(&g_cue[i]);
     }
+  for (int i = 0; i < CUE_MAX; i++)
+    if (g_cue[i].magic && !g_cue[i].ended && g_cue[i].delay <= 0 && !cue_alive(&g_cue[i]))
+      cue_notify_stop(&g_cue[i]);
   for (int i = 0; i < DSB_MAX; i++)
     if (g_dsb[i].magic && g_dsb[i].playing)
       dsb_mix(&g_dsb[i], g_acc);
@@ -800,12 +830,64 @@ HRESULT WINAPI pc_XACT_UnRegisterWaveBank(void *e, WaveBank *w) {
 /* GetNotification(pEngine, pNotificationDesc, pNotification): +0 WORD type, +4
  * pWaveBank */
 HRESULT WINAPI pc_XACT_GetNotification(void *e, const void *desc, void *out) {
-  if (g_prepared_head == g_prepared_tail)
+  u16 type = desc ? *(const u16 *)desc : XACTNOTIFICATIONTYPE_WAVEBANKPREPARED;
+  if (type == XACTNOTIFICATIONTYPE_SOUNDCUESTOP) {
+    const Note *d = desc;
+    HRESULT hr = E_FAIL;
+    lock();
+    for (u32 i = g_note_head; i != g_note_tail; i++) {
+      Note *n = &g_note[i & 63];
+      if (!n->type || (d->cue && d->cue != n->cue))
+        continue;
+      memcpy(out, n, sizeof *n);
+      n->type = 0;
+      hr = S_OK;
+      break;
+    }
+    while (g_note_head != g_note_tail && !g_note[g_note_head & 63].type)
+      g_note_head++;
+    unlock();
+    return hr;
+  }
+  if (type != XACTNOTIFICATIONTYPE_WAVEBANKPREPARED || g_prepared_head == g_prepared_tail)
     return E_FAIL; /* none pending */
   u8 *n = out;
   *(u16 *)n = XACTNOTIFICATIONTYPE_WAVEBANKPREPARED;
   *(u16 *)(n + 2) = 0;
   *(void **)(n + 4) = g_prepared[g_prepared_head++ & 15];
+  return S_OK;
+}
+/* IXACTEngine_RegisterNotification(pEngine, pDesc) */
+HRESULT WINAPI pc_XACT_RegisterNotification(void *e, const Note *d) {
+  if (!d)
+    return S_OK;
+  lock();
+  for (int i = 0; i < 32; i++)
+    if (!g_reg[i].type) {
+      g_reg[i] = *d;
+      break;
+    }
+  unlock();
+  return S_OK;
+}
+/* IXACTEngine_UnRegisterNotification(pEngine, pDesc) */
+HRESULT WINAPI pc_XACT_UnRegisterNotification(void *e, const Note *d) {
+  lock();
+  for (int i = 0; i < 32; i++)
+    if (!d || (g_reg[i].type == d->type && g_reg[i].sb == d->sb && g_reg[i].cue == d->cue))
+      g_reg[i].type = 0;
+  unlock();
+  return S_OK;
+}
+/* IXACTEngine_FlushNotification(pEngine, pDesc): drop pending ones (all for NULL) */
+HRESULT WINAPI pc_XACT_FlushNotification(void *e, const Note *d) {
+  lock();
+  for (u32 i = g_note_head; i != g_note_tail; i++) {
+    Note *n = &g_note[i & 63];
+    if (!d || (n->type == d->type && (!d->cue || d->cue == n->cue)))
+      n->type = 0;
+  }
+  unlock();
   return S_OK;
 }
 HRESULT WINAPI pc_XACT_Out2(void *e, u32 *out) {
