@@ -82,7 +82,15 @@ This writes `rom/extracted/default_pc.exe`. Rebuild after changing anything in `
 ./pc.sh run
 ```
 
-Controls: keyboard (arrows / WASD, Enter = Start, see `src/PC/input.c`) or an XInput gamepad. Saves go to `rom/extracted/` (the Xbox `U:` drive). `./pc.sh clean` removes the build output, screenshots and traces.
+Controls (or an XInput gamepad):
+
+| Keys | Pad | Keys | Pad |
+| :--- | :--- | :--- | :--- |
+| WASD | left stick | Space / X / C / V | A / B / X / Y |
+| IJKL | right stick | Q / E | left / right trigger |
+| arrows | d-pad | 1 / 2 | white / black |
+| Enter / Esc | Start / Back | F / H | stick clicks |
+ Saves go to `rom/extracted/` (the Xbox `U:` drive). `./pc.sh clean` removes the build output, screenshots and traces.
 
 ---
 
