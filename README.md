@@ -136,15 +136,15 @@ Produces `rom/extracted/default_pc.exe`: the XBE mapped 1:1 at its native base `
 
 The only imports are Windows DLLs (`kernel32`, `ntdll`, `user32`, `d3d9`, `d3dcompiler_47`, `xinput9_1_0`), so there is no `xboxkrnl.dll`.
 
-> **Status:** the exe starts on Windows and under Wine on macOS, gets through the *Now Loading* screen, reaches the title screen (*Press Start Button*), navigates options and screen calibration, and boots directly into **Chapter 1: Jack's Return** with in-game 3D rendering and pause/inventory screens. There is no sound yet (XACT is stubbed and reports wave banks as prepared at once), movies are skipped, and the render-target / `CopyRects` / scissor calls are still no-ops.
+> **Status:** the exe starts on Windows and under Wine on macOS, gets through the *Now Loading* screen, reaches the title screen (*Press Start Button*), navigates menus, boots into **Chapter 1: Jack's Return**, and enters **active 3D gameplay** with Jack Skellington (skeletal mesh, Soul Robber, real-time shadow projection, health/helper HUD overlays, and pause/inventory screens). There is no sound yet (XACT is stubbed and reports wave banks as prepared at once), movies are skipped, and render-target / `CopyRects` / scissor calls are still no-ops.
 
 ### In-Game Screenshots (Native PC Port running under Wine / Direct3D 9)
 
-| Title Screen (*Press Start Button*) | Options Menu |
+| In-Game Gameplay (Jack in Halloween Town) | Chapter 1: Jack's Return (In-Game 3D) |
 | :---: | :---: |
+| ![In-Game Gameplay](media/pc-gameplay-jack.png) | ![Chapter 1: Jack's Return](media/pc-chapter-1-jacks-return.png) |
+| **Title Screen (*Press Start Button*)** | **Options Menu** |
 | ![Title Screen](media/pc-title-screen.webp) | ![Options Menu](media/pc-options-menu.png) |
-| **Screen Position Calibration** | **Chapter 1: Jack's Return (In-Game 3D)** |
-| ![Screen Position](media/pc-screen-position.png) | ![Chapter 1: Jack's Return](media/pc-chapter-1-jacks-return.png) |
 | **Action Menu (Soul Robber)** | **Inventory & Item Menu** |
 | ![Action Menu](media/pc-action-menu.png) | ![Inventory Menu](media/pc-inventory-menu.png) |
 

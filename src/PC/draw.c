@@ -310,13 +310,10 @@ static void apply_state(void)
     rs(RS_ZENABLE, XRS(XRS_ZENABLE) ? 1 : 0);
     rs(RS_ZFUNC, map_cmp(XRS(XRS_ZFUNC)));
     rs(RS_ZWRITEENABLE, XRS(XRS_ZWRITEENABLE) ? 1 : 0);
-    /* Colour writes off (shadow-volume passes): wined3d still wrote colour with
-     * COLORWRITEENABLE 0, so such draws blend ZERO, ONE instead (keep the pixel). */
-    u32 cw = map_colorwrite(XRS(XRS_COLORWRITEENABLE));
-    rs(RS_ALPHABLENDENABLE, cw == 0 || XRS(XRS_ALPHABLENDENABLE) ? 1 : 0);
-    rs(RS_SRCBLEND, cw == 0 ? 1 /* ZERO */ : map_blend(XRS(XRS_SRCBLEND)));
-    rs(RS_DESTBLEND, cw == 0 ? 2 /* ONE */ : map_blend(XRS(XRS_DESTBLEND)));
-    rs(RS_BLENDOP, cw == 0 ? 1 /* ADD */ : map_blendop(XRS(XRS_BLENDOP)));
+    rs(RS_ALPHABLENDENABLE, XRS(XRS_ALPHABLENDENABLE) ? 1 : 0);
+    rs(RS_SRCBLEND, map_blend(XRS(XRS_SRCBLEND)));
+    rs(RS_DESTBLEND, map_blend(XRS(XRS_DESTBLEND)));
+    rs(RS_BLENDOP, map_blendop(XRS(XRS_BLENDOP)));
     rs(RS_ALPHATESTENABLE, XRS(XRS_ALPHATESTENABLE) ? 1 : 0);
     rs(RS_ALPHAFUNC, map_cmp(XRS(XRS_ALPHAFUNC)));
     rs(RS_ALPHAREF, XRS(XRS_ALPHAREF) & 0xFF);
@@ -335,7 +332,7 @@ static void apply_state(void)
         rs(RS_STENCILPASS, map_stencilop(XRS(XRS_STENCILPASS)));
     }
     rs(RS_TEXTUREFACTOR, XRS(XRS_TEXTUREFACTOR));
-    rs(RS_COLORWRITEENABLE, cw ? cw : 15);
+    rs(RS_COLORWRITEENABLE, map_colorwrite(XRS(XRS_COLORWRITEENABLE)));   /* 0: stencil-only shadow passes */
 
     int ps = bind_pshader();
     for (u32 s = 0; s < 4; s++) {
@@ -622,9 +619,14 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
 static int skip_shadow_pass(void)
 {
     static int shadows = -1;
-    if (shadows < 0) { char b[4]; shadows = !(GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 && b[0] == '0'); }
+    if (shadows < 0) { char b[4]; shadows = GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 ? b[0] : '1'; }
     if (g_rt_offscreen) { g_stat_rt_skipped++; return 1; }
-    return !shadows && XRS(XRS_STENCILENABLE);
+    if (!XRS(XRS_STENCILENABLE)) return 0;
+    /* 0: no shadows, v: volumes (stencil) only, s: shading only (experiments) */
+    if (shadows == '0') return 1;
+    if (shadows == 'v') return XRS(XRS_COLORWRITEENABLE) != 0;
+    if (shadows == 's') return XRS(XRS_COLORWRITEENABLE) == 0;
+    return 0;
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
@@ -634,21 +636,40 @@ static int skip_shadow_pass(void)
  * drawn together as g_quad_ib quads when the state changes or anything else
  * is drawn, cleared or presented. The state is compared through a checksum of everything a draw
  * applies: render / texture-stage state, vertex constants, shaders, textures. */
-static u32 g_batch_sig, g_batch_start, g_batch_verts, g_batch_stride;
+static u32 g_batch_start, g_batch_verts, g_batch_stride;
 static u8* g_batch_ptr;                       /* ring locked for the batch, up to g_batch_cap vertices */
 static u32 g_batch_cap;
 #define BATCH_LOCK 0x10000u                   /* bytes locked at a time */
 
-static u32 state_sig(void)
+/* Snapshot of everything a draw applies; a batch continues while it is unchanged. */
+#define SNAP_WORDS (160 + 4 * 32 + 192 * 4 + 6)
+static u32 g_batch_snap[SNAP_WORDS];
+
+static void take_snapshot(u32* d)
 {
-    u32 s = 2166136261u;
-    for (u32 i = 0; i < 160; i++) s = (s ^ XRS(i)) * 16777619u;
-    for (u32 i = 0; i < 4 * 32; i++) s = (s ^ XTS(i / 32, i % 32)) * 16777619u;
-    const u32* c = (const u32*)0x001e1c70;
-    for (u32 i = 0; i < 192 * 4; i++) s = (s ^ c[i]) * 16777619u;
-    s = (s ^ g_vshader) * 16777619u; s = (s ^ g_pshader) * 16777619u;
-    for (u32 i = 0; i < 4; i++) s = (s ^ (u32)g_textures[i]) * 16777619u;
-    return s;
+    memcpy(d, (const void*)0x001e2a94, 160 * 4);                  /* D3D__RenderState */
+    memcpy(d + 160, (const void*)0x001e2890, 4 * 32 * 4);         /* D3D__TextureState */
+    memcpy(d + 160 + 128, (const void*)0x001e1c70, 192 * 16);     /* vertex shader constants */
+    u32* e = d + 160 + 128 + 768;
+    e[0] = g_vshader; e[1] = g_pshader;
+    for (u32 i = 0; i < 4; i++) e[2 + i] = (u32)g_textures[i];
+}
+
+static int same_words(const u32* a, const u32* b, u32 n)
+{
+    for (u32 i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+/* the live state against the batch's snapshot, without copying it */
+static int same_state(void)
+{
+    const u32* e = g_batch_snap + 160 + 128 + 768;
+    if (e[0] != g_vshader || e[1] != g_pshader) return 0;
+    for (u32 i = 0; i < 4; i++) if (e[2 + i] != (u32)g_textures[i]) return 0;
+    return same_words((const u32*)0x001e1c70, g_batch_snap + 160 + 128, 192 * 4) &&
+           same_words((const u32*)0x001e2a94, g_batch_snap, 160) &&
+           same_words((const u32*)0x001e2890, g_batch_snap + 160, 128);
 }
 
 static void batch_flush(void)
@@ -674,8 +695,7 @@ static void copy_strip_as_quad(u8* dst, const u8* src, u32 stride)
 /* 1 if the strip was added to the batch (or started one) */
 static int batch_strip(const void* data, u32 stride)
 {
-    u32 sig = state_sig();
-    if (g_batch_ptr && sig == g_batch_sig && stride == g_batch_stride && g_batch_verts + 4 <= g_batch_cap) {
+    if (g_batch_ptr && stride == g_batch_stride && g_batch_verts + 4 <= g_batch_cap && same_state()) {
         copy_strip_as_quad(g_batch_ptr + g_batch_verts * stride, data, stride);
         g_batch_verts += 4;
         return 1;
@@ -693,7 +713,8 @@ static int batch_strip(const void* data, u32 stride)
         VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, 0, g_ring, 0, stride);
         g_ring_stride0 = stride; g_stream9[0] = NULL;
     }
-    g_batch_sig = sig; g_batch_stride = stride; g_batch_start = pos / stride; g_batch_cap = lock / stride;
+    take_snapshot(g_batch_snap);
+    g_batch_stride = stride; g_batch_start = pos / stride; g_batch_cap = lock / stride;
     copy_strip_as_quad(g_batch_ptr, data, stride);
     g_batch_verts = 4;
     return 1;
@@ -704,8 +725,8 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
     g_stat_draw_up++;
     trace_draw("[tr] UP", prim, count, data, stride);
     if (!g_dev || !data || !count || skip_shadow_pass()) return;
+    if (prim == 6 && count == 4 && batch_strip(data, stride)) return;
     u32 t0 = ticks();
-    if (prim == 6 && count == 4 && batch_strip(data, stride)) { g_us_draw += us_since(t0); return; }
     batch_flush();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
