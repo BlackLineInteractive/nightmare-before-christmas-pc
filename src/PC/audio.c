@@ -219,6 +219,7 @@ typedef struct Cue {
   Source *src;
   int paused;
   u32 t;   /* samples played (48 kHz) */
+  s32 delay; /* samples to wait before starting (lines sound up with the picture) */
   s32 vol; /* the sound's volume */
   Track tr[4];
   u32 ntr;
@@ -239,7 +240,8 @@ static const s16 g_step[89] = {
 static const s32 g_index_adj[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
 
 /* one Xbox ADPCM block: per channel a 4-byte header (sample, step index),
- * then 8 rounds of 4 bytes per channel = 64 samples per channel */
+ * then 8 rounds of 4 bytes per channel = 64 samples per channel (the
+ * header sample only seeds the predictor, as in vgmstream's Xbox IMA) */
 static void adpcm_block(const u8 *b, u32 ch, s16 *out) {
   for (u32 c = 0; c < ch; c++) {
     s32 pred = *(const s16 *)(b + 4 * c), idx = b[4 * c + 2];
@@ -429,7 +431,19 @@ static int cue_alive(Cue *c) {
   return 0;
 }
 
+/* The game starts its sounds a few frames ahead of what is on screen (the
+ * Xbox output path had latency this one lacks): cues wait PC_AUDIODELAY ms,
+ * 100 by default. */
+static s32 g_delay = 100 * 48;
+
+static u32 g_cue_log;
 static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
+  if (sb && index < sb->cues && g_cue_log < 200) {
+    g_cue_log++;
+    log_str("[pc] audio: cue ");
+    log_str((const char *)sb->data + *(const u32 *)(sb_cue(sb, index) + 4));
+    log_str("\n");
+  }
   if (!sb || index >= sb->cues)
     return NULL;
   u32 snd = *(const u16 *)(sb_cue(sb, index) + 2);
@@ -450,6 +464,7 @@ static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
   }
   memset(c, 0, sizeof *c);
   c->magic = 0x20455543;
+  c->delay = g_delay;
   c->sb = sb;
   c->index = index;
   c->src = src;
@@ -478,28 +493,87 @@ static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
   return c;
 }
 
+#define MIX_FRAMES 1024
+
+/* ------------------------------------------------- DirectSound buffers */
+
+/* Bink plays a movie's sound through one looping DirectSound buffer whose
+ * memory is its own (SetBufferData): it writes PCM ahead of the play
+ * cursor and paces itself on GetCurrentPosition. */
+typedef struct {
+  u32 magic;           /* 'DSB ' while alive */
+  u32 ch, bits, rate;
+  u8 *data;
+  u32 bytes, pos;      /* pos: play cursor, bytes */
+  int playing, looping;
+  s32 volume;
+  float frac;
+} DSBuf;
+#define DSB_MAX 8
+static DSBuf g_dsb[DSB_MAX];
+
+static float g_master = 1.0f;
+
+static void dsb_mix(DSBuf *b, float *a) {
+  u32 frame = b->ch * (b->bits / 8);
+  if (!b->data || !frame || b->bytes < frame)
+    return;
+  float g = db100_gain(b->volume) * g_master;
+  float step = (float)b->rate / 48000.0f;
+  for (u32 n = 0; n < MIX_FRAMES; n++) {
+    const u8 *p = b->data + b->pos;
+    float l, r;
+    if (b->bits == 16) {
+      l = (float)((const s16 *)p)[0] * (1.0f / 32768.0f);
+      r = b->ch > 1 ? (float)((const s16 *)p)[1] * (1.0f / 32768.0f) : l;
+    } else {
+      l = ((float)p[0] - 128.0f) * (1.0f / 128.0f);
+      r = b->ch > 1 ? ((float)p[1] - 128.0f) * (1.0f / 128.0f) : l;
+    }
+    a[2 * n] += l * g;
+    a[2 * n + 1] += r * g;
+    b->frac += step;
+    while (b->frac >= 1.0f) {
+      b->frac -= 1.0f;
+      b->pos += frame;
+      if (b->pos + frame > b->bytes) {
+        b->pos = 0;
+        if (!b->looping) {
+          b->playing = 0;
+          return;
+        }
+      }
+    }
+  }
+}
+
 /* ---------------------------------------------------------------- mixer */
 
-#define MIX_FRAMES 1024
 #define MIX_BUFS 4
 static s16 g_mixbuf[MIX_BUFS][MIX_FRAMES * 2];
 static float g_acc[MIX_FRAMES * 2];
-static float g_master = 1.0f;
 
 static void mix(s16 *out) {
   memset(g_acc, 0, sizeof g_acc);
   lock();
   for (int i = 0; i < CUE_MAX; i++)
     if (g_cue[i].magic && !g_cue[i].paused) {
+      if (g_cue[i].delay > 0) {
+        g_cue[i].delay -= MIX_FRAMES;
+        continue;
+      }
       g_cue[i].t += MIX_FRAMES;
       cue_event_loop(&g_cue[i]);
     }
+  for (int i = 0; i < DSB_MAX; i++)
+    if (g_dsb[i].magic && g_dsb[i].playing)
+      dsb_mix(&g_dsb[i], g_acc);
   for (int i = 0; i < VOICE_MAX; i++) {
     Voice *v = &g_voice[i];
     if (!v->active)
       continue;
     Cue *c = v->cue;
-    if (c && c->paused)
+    if (c && (c->paused || c->delay > 0))
       continue;
     Track *t = NULL;
     if (c)
@@ -543,6 +617,18 @@ static void mix(s16 *out) {
       s = -1.0f;
     out[n] = (s16)(s * 32767.0f);
   }
+  /* PC_AUDIODUMP=1: the mixed output also goes to audio_dump.raw (48 kHz stereo s16) */
+  static HANDLE dump = (HANDLE)1;
+  if (dump == (HANDLE)1) {
+    char e[4];
+    dump = GetEnvironmentVariableA("PC_AUDIODUMP", e, 4) > 0
+               ? CreateFileA("audio_dump.raw", 0x40000000, 1, NULL, 2, 0x80, NULL)
+               : NULL;
+  }
+  if (dump) {
+    u32 w;
+    WriteFile(dump, out, MIX_FRAMES * 4, &w, NULL);
+  }
 }
 
 static u32 WINAPI mixer_thread(void *arg) {
@@ -582,6 +668,14 @@ static void audio_init(void) {
   char b[4];
   if (GetEnvironmentVariableA("PC_NOSOUND", b, 4) > 0)
     return;
+  char d[8];
+  u32 n = GetEnvironmentVariableA("PC_AUDIODELAY", d, 8);
+  if (n > 0 && n < 8) {
+    s32 ms = 0;
+    for (u32 i = 0; i < n && d[i] >= '0' && d[i] <= '9'; i++)
+      ms = ms * 10 + d[i] - '0';
+    g_delay = ms * 48;
+  }
   CreateThread(NULL, 0, mixer_thread, NULL, 0, NULL);
 }
 
@@ -840,6 +934,98 @@ HRESULT WINAPI pc_XACT_Src_GetStatus(void *p, u32 *out) {
 HRESULT WINAPI pc_XACT_Nop1(void *a) { return S_OK; }
 HRESULT WINAPI pc_XACT_Nop2(void *a, void *b) { return S_OK; }
 HRESULT WINAPI pc_XACT_Nop3(void *a, void *b, void *c) { return S_OK; }
+
+/* DirectSound (the parts Bink uses) */
+static u32 g_dsound[16];
+static DSBuf *as_dsb(void *p) { DSBuf *b = p; return b >= g_dsb && b < g_dsb + DSB_MAX && b->magic ? b : NULL; }
+
+/* DirectSoundCreate(pGuid, ppDirectSound, pUnkOuter) */
+HRESULT WINAPI pc_DirectSoundCreate(void *guid, void **pp, void *unk) {
+  audio_init();
+  *pp = g_dsound;
+  return S_OK;
+}
+u32 WINAPI pc_DS_Release(void *ds) { return 0; }
+
+/* IDirectSound_CreateSoundBuffer(pDS, pDesc, ppBuffer, pUnkOuter):
+ * desc +0 size, +4 flags, +8 bytes, +12 format */
+HRESULT WINAPI pc_DS_CreateSoundBuffer(void *ds, const u32 *desc, void **pp, void *unk) {
+  const u8 *wfx = (const u8 *)desc[3];
+  DSBuf *b = NULL;
+  lock();
+  for (int i = 0; i < DSB_MAX && !b; i++)
+    if (!g_dsb[i].magic)
+      b = &g_dsb[i];
+  if (b && wfx) {
+    memset(b, 0, sizeof *b);
+    b->ch = *(const u16 *)(wfx + 2);
+    b->rate = *(const u32 *)(wfx + 4);
+    b->bits = *(const u16 *)(wfx + 14);
+    b->magic = 0x20425344;
+  } else
+    b = NULL;
+  unlock();
+  *pp = b;
+  return b ? S_OK : E_FAIL;
+}
+u32 WINAPI pc_DSB_Release(void *p) {
+  DSBuf *b = as_dsb(p);
+  if (b) { lock(); b->magic = 0; b->playing = 0; unlock(); }
+  return 0;
+}
+HRESULT WINAPI pc_DSB_SetBufferData(void *p, void *data, u32 bytes) {
+  DSBuf *b = as_dsb(p);
+  if (b) { lock(); b->data = data; b->bytes = bytes; b->pos = 0; unlock(); }
+  return S_OK;
+}
+/* Play(pBuffer, reserved, priority, flags: 1 = looping) */
+HRESULT WINAPI pc_DSB_Play(void *p, u32 r1, u32 r2, u32 flags) {
+  DSBuf *b = as_dsb(p);
+  if (b) { b->looping = flags & 1; b->playing = 1; }
+  return S_OK;
+}
+HRESULT WINAPI pc_DSB_Stop(void *p) {
+  DSBuf *b = as_dsb(p);
+  if (b) b->playing = 0;
+  return S_OK;
+}
+HRESULT WINAPI pc_DSB_GetStatus(void *p, u32 *st) {
+  DSBuf *b = as_dsb(p);
+  *st = b && b->playing ? (b->looping ? 5 : 1) : 0;   /* PLAYING | LOOPING */
+  return S_OK;
+}
+HRESULT WINAPI pc_DSB_SetCurrentPosition(void *p, u32 pos) {
+  DSBuf *b = as_dsb(p);
+  if (b) { lock(); b->pos = pos < b->bytes ? pos - pos % (b->ch * b->bits / 8) : 0; unlock(); }
+  return S_OK;
+}
+/* GetCurrentPosition(pBuffer, pdwPlay, pdwWrite): the write cursor is
+ * where the mixer reads next */
+HRESULT WINAPI pc_DSB_GetCurrentPosition(void *p, u32 *play, u32 *write) {
+  DSBuf *b = as_dsb(p);
+  u32 pos = b ? b->pos : 0;
+  if (play) *play = pos;
+  if (write) *write = pos;
+  return S_OK;
+}
+/* Lock(pBuffer, offset, bytes, ppv1, pn1, ppv2, pn2, flags: 2 = entire buffer) */
+HRESULT WINAPI pc_DSB_Lock(void *p, u32 off, u32 n, void **p1, u32 *n1, void **p2, u32 *n2, u32 flags) {
+  DSBuf *b = as_dsb(p);
+  if (!b || !b->data) return E_FAIL;
+  if (flags & 2) { off = 0; n = b->bytes; }
+  if (off >= b->bytes) off = 0;
+  if (n > b->bytes) n = b->bytes;
+  u32 first = b->bytes - off < n ? b->bytes - off : n;
+  *p1 = b->data + off; *n1 = first;
+  if (p2) *p2 = n > first ? b->data : NULL;
+  if (n2) *n2 = n - first;
+  return S_OK;
+}
+HRESULT WINAPI pc_DSB_SetVolume(void *p, s32 v) {
+  DSBuf *b = as_dsb(p);
+  if (b) b->volume = v;
+  return S_OK;
+}
 
 /* DirectSound */
 void WINAPI pc_DirectSoundUseLightHRTF4Channel(void) {}

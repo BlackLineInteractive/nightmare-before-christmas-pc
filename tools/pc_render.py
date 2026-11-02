@@ -103,7 +103,7 @@ MEM_TO_PC = {
     0x1bff34: ('_pc_XMemFree@8', 'XMemFree'),
 }
 
-# XACT / DirectSound -> src/PC/audio.c (silent for now)
+# XACT / DirectSound -> src/PC/audio.c
 AUDIO_TO_PC = {
     0x22470e: ('_pc_XACTEngineCreate@8', 'XACTEngineCreate'),
     0x2246dc: ('_pc_XACTEngineDoWork@0', 'XACTEngineDoWork'),
@@ -111,27 +111,44 @@ AUDIO_TO_PC = {
     0x222b1d: ('_pc_XACT_CreateSoundBank@16', 'IXACTEngine_CreateSoundBank'),
     0x222b60: ('_pc_XACT_RegisterWaveBank@16', 'IXACTEngine_RegisterWaveBank'),
     0x222ba3: ('_pc_XACT_RegisterStreamedWaveBank@12', 'IXACTEngine_RegisterStreamedWaveBank'),
-    0x222be2: ('_pc_XACT_Nop2@8', 'IXACTEngine_UnRegisterWaveBank'),
-    0x222c1d: ('_pc_XACT_Eng3@12', 'IXACTEngine (3 args)'),
+    0x222be2: ('_pc_XACT_UnRegisterWaveBank@8', 'IXACTEngine_UnRegisterWaveBank'),
+    0x222c1d: ('_pc_XACT_Nop3@12', 'IXACTEngine (3 args)'),
     0x222c3d: ('_pc_XACT_Nop2@8', 'IXACTEngine_RegisterNotification'),
     0x222c78: ('_pc_XACT_Nop2@8', 'IXACTEngine_UnRegisterNotification'),
     0x222cb3: ('_pc_XACT_GetNotification@12', 'IXACTEngine_GetNotification'),
     0x222cf2: ('_pc_XACT_Nop2@8', 'IXACTEngine_FlushNotification'),
     0x222d2d: ('_pc_XACT_Out2@8', 'IXACTEngine (engine, out)'),
-    0x222d65: ('_pc_XACT_Eng2@8', 'IXACTEngine (2 args)'),
+    0x222d65: ('_pc_XACT_Nop2@8', 'IXACTEngine (2 args)'),
     0x222da2: ('_pc_XACT_Release@4', 'IXACT object Release'),
     0x222dcd: ('_pc_XACT_GetCueIndex@12', 'IXACTSoundBank_GetSoundCueIndexFromFriendlyName'),
-    0x222e00: ('_pc_XACT_SB_e00@12', 'IXACTSoundBank (3 args)'),
+    0x222e00: ('_pc_XACT_SB_Play@12', 'IXACTSoundBank_Play(params, ppCue)'),
     0x222e33: ('_pc_XACT_SB_PlayEx@12', 'IXACTSoundBank_PlayEx'),
-    0x222e66: ('_pc_XACT_SB_e66@16', 'IXACTSoundBank (4 args)'),
-    0x222e9d: ('_pc_XACT_SB_e9d@12', 'IXACTSoundBank (3 args)'),
-    0x222ed0: ('_pc_XACT_Cue_ed0@4', 'IXACTSoundCue (1 arg)'),
-    0x222ed5: ('_pc_XACT_Cue_ed5@20', 'IXACTSoundCue (x, y, z, apply)'),
-    0x222efe: ('_pc_XACT_Cue_efe@8', 'IXACTSoundCue (2 args)'),
-    0x222f03: ('_pc_XACT_Cue_f03@8', 'IXACTSoundCue (2 args)'),
-    0x222f08: ('_pc_XACT_Cue_f08@4', 'IXACTSoundCue (1 arg)'),
-    0x222f0d: ('_pc_XACT_Cue_f0d@8', 'IXACTSoundCue (cue, out)'),
+    0x222e66: ('_pc_XACT_SB_Stop@16', 'IXACTSoundBank_Stop(index, flags, pCue)'),
+    0x222e9d: ('_pc_XACT_SB_Pause@12', 'IXACTSoundBank pause(pCue, bPause)'),
+    0x222ed0: ('_pc_XACT_Src_Release@4', 'IXACTSoundSource_Release'),
+    0x222ed5: ('_pc_XACT_Src_SetPosition@20', 'IXACTSoundSource_SetPosition'),
+    0x222efe: ('_pc_XACT_Src_2a@8', 'IXACTSoundSource (2 args)'),
+    0x222f03: ('_pc_XACT_Src_SetVolume@8', 'IXACTSoundSource volume (1/100 dB)'),
+    0x222f08: ('_pc_XACT_Src_1@4', 'IXACTSoundSource (1 arg)'),
+    0x222f0d: ('_pc_XACT_Src_GetStatus@8', 'IXACTSoundSource_GetStatus'),
     0x204492: ('_pc_DirectSoundUseLightHRTF4Channel@0', 'DirectSoundUseLightHRTF4Channel'),
+    # DirectSound as Bink's sound driver uses it (one looping buffer per movie)
+    0x2076aa: ('_pc_DirectSoundCreate@12', 'DirectSoundCreate'),
+    0x204461: ('_pc_DS_Release@4', 'IDirectSound_Release'),
+    0x20749c: ('_pc_DS_CreateSoundBuffer@16', 'IDirectSound_CreateSoundBuffer'),
+    0x20447c: ('_pc_DSB_Release@4', 'IDirectSoundBuffer_Release'),
+    0x206d33: ('_pc_DSB_SetBufferData@12', 'IDirectSoundBuffer_SetBufferData'),
+    0x205cf1: ('_pc_DSB_Play@16', 'IDirectSoundBuffer_Play'),
+    0x205d15: ('_pc_DSB_Stop@4', 'IDirectSoundBuffer_Stop'),
+    0x205d71: ('_pc_DSB_GetStatus@8', 'IDirectSoundBuffer_GetStatus'),
+    0x205dad: ('_pc_DSB_SetCurrentPosition@8', 'IDirectSoundBuffer_SetCurrentPosition'),
+    0x205d8d: ('_pc_DSB_GetCurrentPosition@12', 'IDirectSoundBuffer_GetCurrentPosition'),
+    0x205dc9: ('_pc_DSB_Lock@32', 'IDirectSoundBuffer_Lock'),
+    0x205c2d: ('_pc_DSB_SetVolume@8', 'IDirectSoundBuffer_SetVolume'),
+    0x205cb9: ('_pc_XACT_Nop2@8', 'IDirectSoundBuffer (frequency / pitch)'),
+    0x2066b2: ('_pc_XACT_Nop2@8', 'IDirectSoundBuffer mix bins'),
+    0x205cd5: ('_pc_XACT_Nop2@8', 'IDirectSoundBuffer mix bin volumes'),
+    0x20667a: ('_pc_XACT_Nop2@8', 'IDirectSoundBuffer (2 args)'),
     0x205ece: ('_pc_XAudioDownloadEffectsImage@16', 'XAudioDownloadEffectsImage'),
 }
 
@@ -145,6 +162,7 @@ DLL_OF = {
                    'GetAsyncKeyState'},
     'xinput9_1_0.dll': {'XInputGetState'},
     'd3dcompiler_47.dll': {'D3DCompile'},
+    'winmm.dll': {'waveOutOpen', 'waveOutPrepareHeader', 'waveOutWrite'},
 }
 
 

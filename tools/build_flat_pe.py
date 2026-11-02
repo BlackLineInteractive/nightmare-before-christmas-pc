@@ -102,13 +102,8 @@ def build_flat_binary(xbe_path, pe_path):
     image_mem[p5_off : p5_off + 5] = b'\x90\x90\x90\x90\x90'
     print(f"[+] [PATCH 5] Neutralized XPP MMIO write at VA 0x0025c41f")
 
-    # Patch 6: BinkOpenDirectSound at VA 0x00231910 -> xor eax, eax; ret 4
-    # Bink's sound driver goes through the Xbox DirectSound (MCPX hardware);
-    # without a driver Bink plays the movies silently. Movie sound goes
-    # through src/PC/audio.c later.
-    p6_off = 0x00231910 - base_addr
-    image_mem[p6_off : p6_off + 5] = b'\x31\xC0\xC2\x04\x00'
-    print(f"[+] [PATCH 6] Bink movies without sound (BinkOpenDirectSound at VA 0x00231910 -> NULL)")
+    # (Patch 6, Bink without sound, is gone: Bink's DirectSound calls go
+    #  to src/PC/audio.c like XACT.)
 
     # Patch 7: wbinvd; ret at VA 0x001bce00 -> ret
     # The game flushes the CPU caches after each Bink frame (for the GPU);
