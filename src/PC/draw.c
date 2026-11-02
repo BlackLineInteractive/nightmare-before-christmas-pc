@@ -41,19 +41,43 @@ typedef HRESULT (WINAPI *PFN_SetRS)(IUnk*, u32, u32);
 typedef HRESULT (WINAPI *PFN_SetTSS)(IUnk*, u32, u32, u32);
 typedef HRESULT (WINAPI *PFN_SetTex)(IUnk*, u32, IUnk*);
 typedef HRESULT (WINAPI *PFN_SetXf)(IUnk*, u32, const float*);
-typedef HRESULT (WINAPI *PFN_DrawUP)(IUnk*, u32, u32, const void*, u32);
-typedef HRESULT (WINAPI *PFN_DrawIdxUP)(IUnk*, u32, u32, u32, u32, const void*, u32, const void*, u32);
 typedef HRESULT (WINAPI *PFN_CreateTex)(IUnk*, u32, u32, u32, u32, u32, u32, IUnk**, void*);
 typedef HRESULT (WINAPI *PFN_TexLock)(IUnk*, u32, D3DLOCKED_RECT*, const void*, u32);
 typedef HRESULT (WINAPI *PFN_TexUnlock)(IUnk*, u32);
 
-#define DEV_DrawIndexedPrimitiveUP 84
 #define TEX_LockRect   19
 #define TEX_UnlockRect 20
 
-static void rs(u32 s, u32 v) { VCALL(g_dev, DEV_SetRenderState, PFN_SetRS)(g_dev, s, v); }
-static void tss(u32 st, u32 s, u32 v) { VCALL(g_dev, DEV_SetTextureStageState, PFN_SetTSS)(g_dev, st, s, v); }
-static void samp(u32 st, u32 s, u32 v) { VCALL(g_dev, DEV_SetSamplerState, PFN_SetTSS)(g_dev, st, s, v); }
+/* Every draw applies the whole Xbox state, so the Direct3D 9 calls go through
+ * a cache and only changes reach the device (each call is costly, above all
+ * under Wine). */
+static u32 g_rs9[256], g_tss9[4][32], g_samp9[4][16];
+static u8  g_rs9_set[256], g_tss9_set[4][32], g_samp9_set[4][16];
+static IUnk* g_tex9[4];
+static float g_xf9[4][16];                   /* view, projection, world, (unused) */
+
+static void rs(u32 s, u32 v)
+{
+    if (s < 256) { if (g_rs9_set[s] && g_rs9[s] == v) return; g_rs9_set[s] = 1; g_rs9[s] = v; }
+    VCALL(g_dev, DEV_SetRenderState, PFN_SetRS)(g_dev, s, v);
+}
+static void tss(u32 st, u32 s, u32 v)
+{
+    if (st < 4 && s < 32) { if (g_tss9_set[st][s] && g_tss9[st][s] == v) return; g_tss9_set[st][s] = 1; g_tss9[st][s] = v; }
+    VCALL(g_dev, DEV_SetTextureStageState, PFN_SetTSS)(g_dev, st, s, v);
+}
+static void samp(u32 st, u32 s, u32 v)
+{
+    if (st < 4 && s < 16) { if (g_samp9_set[st][s] && g_samp9[st][s] == v) return; g_samp9_set[st][s] = 1; g_samp9[st][s] = v; }
+    VCALL(g_dev, DEV_SetSamplerState, PFN_SetTSS)(g_dev, st, s, v);
+}
+static void set_tex9(u32 st, IUnk* t)
+{
+    if (g_tex9[st] == t) return;
+    g_tex9[st] = t;
+    VCALL(g_dev, DEV_SetTexture, PFN_SetTex)(g_dev, st, t);
+}
+static int same16(const float* a, const float* b) { const u32* x = (const u32*)a, *y = (const u32*)b; for (int i = 0; i < 16; i++) if (x[i] != y[i]) return 0; return 1; }
 
 /* ---------------------------------------------------------- enum mapping */
 
@@ -207,7 +231,9 @@ static IUnk* get_texture(const u32* res)
         if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) return e->tex;
         if (!e->key) {
             if (e->tex) VCALL(e->tex, 2, PFN_Scene)(e->tex);      /* Release a stale one */
+            u32 t = ticks();
             e->tex = upload_texture(res);
+            g_us_upload += us_since(t); g_n_upload++;
             e->key = (u32)res; e->data = res[1]; e->format = res[3]; e->size = res[4];
             return e->tex;
         }
@@ -251,7 +277,7 @@ static void apply_state(void)
         rs(RS_ZENABLE, 0); rs(RS_ALPHABLENDENABLE, 1); rs(RS_SRCBLEND, 5); rs(RS_DESTBLEND, 6);
         rs(RS_ALPHATESTENABLE, 0); rs(RS_CULLMODE, 1); rs(RS_LIGHTING, 0); rs(RS_COLORWRITEENABLE, 15);
         IUnk* t = g_textures[0] ? get_texture((const u32*)g_textures[0]) : NULL;
-        VCALL(g_dev, DEV_SetTexture, PFN_SetTex)(g_dev, 0, t);
+        set_tex9(0, t);
         tss(0, TSS_COLOROP, t ? 5 : 2); tss(0, TSS_COLORARG1, t ? 2 : 0); tss(0, TSS_COLORARG2, 0);
         tss(0, TSS_ALPHAOP, t ? 5 : 2); tss(0, TSS_ALPHAARG1, t ? 2 : 0); tss(0, TSS_ALPHAARG2, 0);
         tss(1, TSS_COLOROP, 1);
@@ -284,7 +310,7 @@ static void apply_state(void)
 
     for (u32 s = 0; s < 4; s++) {
         IUnk* t = g_textures[s] ? get_texture((const u32*)g_textures[s]) : NULL;
-        VCALL(g_dev, DEV_SetTexture, PFN_SetTex)(g_dev, s, t);
+        set_tex9(s, t);
         u32 cop = map_top(XTS(s, XTS_COLOROP)), aop = map_top(XTS(s, XTS_ALPHAOP));
         tss(s, TSS_COLOROP, cop);
         tss(s, TSS_COLORARG1, XTS(s, XTS_COLORARG1));
@@ -307,11 +333,17 @@ static void apply_state(void)
     }
 
     /* Xbox D3DTS: VIEW 0, PROJECTION 1, TEXTURE0..3 2..5, WORLD 6 */
-    PFN_SetXf setxf = VCALL(g_dev, DEV_SetTransform, PFN_SetXf);
-    setxf(g_dev, 2, g_transforms[0]);
-    setxf(g_dev, 3, g_transforms[1]);
-    setxf(g_dev, 256, g_transforms[6]);
-    for (u32 s = 0; s < 4; s++) setxf(g_dev, 16 + s, g_transforms[2 + s]);
+    /* only the fixed-function pipeline (FVF draws) uses the transforms */
+    if (vsh_index(g_vshader) < 0) {
+        PFN_SetXf setxf = VCALL(g_dev, DEV_SetTransform, PFN_SetXf);
+        static const u32 d3d9_of[3] = { 2, 3, 256 }, xbox_of[3] = { 0, 1, 6 };
+        for (u32 k = 0; k < 3; k++)
+            if (!same16(g_xf9[k], g_transforms[xbox_of[k]])) {
+                memcpy(g_xf9[k], g_transforms[xbox_of[k]], 64);
+                setxf(g_dev, d3d9_of[k], g_transforms[xbox_of[k]]);
+            }
+        for (u32 s = 0; s < 4; s++) setxf(g_dev, 16 + s, g_transforms[2 + s]);
+    }
 }
 
 /* ------------------------------------------------------------------- draw */
@@ -325,62 +357,93 @@ typedef HRESULT (WINAPI *PFN_DrawPrim)(IUnk*, u32, u32, u32);
 #define DEV_DrawPrimitive      81
 #define DEV_SetStreamSource   100
 
-static IUnk* g_vb9[16];
-static u32   g_vb9_size[16];
+/* Vertices go through one dynamic ring buffer in SYSTEMMEM: appended with
+ * NOOVERWRITE, DISCARD only when it wraps. Under Wine on macOS (wined3d on
+ * OpenGL without async buffer mapping) the *UP draws and DEFAULT-pool locks
+ * stall or re-upload the whole buffer: 1-10 ms per draw; a SYSTEMMEM buffer
+ * only sends the range a draw uses. Quads (Xbox prim 8) use a static index
+ * buffer. */
+typedef HRESULT (WINAPI *PFN_CreateIB)(IUnk*, u32, u32, u32, u32, IUnk**, void*);
+typedef HRESULT (WINAPI *PFN_DrawIdx)(IUnk*, u32, s32, u32, u32, u32, u32);
+#define DEV_CreateIndexBuffer   27
+#define DEV_DrawIndexedPrimitive 82
+#define DEV_SetIndices         104
+#define RING_SIZE  0x800000u
+#define MAX_QUADS  16384
 
-/* Xbox primitive -> D3D9 type and primitive count; quads come pre-expanded */
+static IUnk* g_ring;
+static u32   g_ring_pos;
+static IUnk* g_quad_ib;
+
+/* Xbox primitive -> D3D9 type and primitive count */
 static u32 prim9(u32 prim, u32 count, u32* n)
 {
     switch (prim) {
     case 1: *n = count; return 1;
     case 2: *n = count / 2; return 2;
     case 3: case 4: *n = count - 1; return 3;
-    case 5: case 8: *n = count / 3; return 4;
+    case 5: *n = count / 3; return 4;
+    case 8: *n = count / 4 * 2; return 4;       /* quads: 2 triangles each, via g_quad_ib */
     case 6: case 9: *n = count - 2; return 5;
     default: *n = count - 2; return 6;          /* fan, polygon */
     }
 }
 
-static u16 g_quad_idx[6 * 4096];
-static u32 quad_indices(u32 count)            /* -> index count */
+static int ring_init(void)
 {
-    u32 quads = count / 4;
-    if (quads > 4096) quads = 4096;
-    for (u32 q = 0; q < quads; q++) {
+    if (g_ring) return 1;
+    if (VCALL(g_dev, DEV_CreateVertexBuffer, PFN_CreateVB)(g_dev, RING_SIZE, 0x208 /* DYNAMIC|WRITEONLY */,
+                                                           0, 2 /* SYSTEMMEM */, &g_ring, NULL) < 0) return 0;
+    if (VCALL(g_dev, DEV_CreateIndexBuffer, PFN_CreateIB)(g_dev, MAX_QUADS * 12, 8 /* WRITEONLY */, 101 /* INDEX16 */,
+                                                          1 /* MANAGED */, &g_quad_ib, NULL) < 0) return 0;
+    u16* d;
+    if (VCALL(g_quad_ib, 11, PFN_VBLock)(g_quad_ib, 0, 0, (void**)&d, 0) < 0) return 0;
+    for (u32 q = 0; q < MAX_QUADS; q++, d += 6) {
         u16 b = (u16)(q * 4);
-        u16* d = g_quad_idx + q * 6;
         d[0] = b; d[1] = b + 1; d[2] = b + 2; d[3] = b; d[4] = b + 2; d[5] = b + 3;
     }
-    return quads * 6;
+    VCALL(g_quad_ib, 12, PFN_VBUnlock)(g_quad_ib);
+    VCALL(g_dev, DEV_SetIndices, PFN_SetObj)(g_dev, g_quad_ib);
+    return 1;
 }
 
-/* Vertices from Xbox memory (stream data), one D3D9 dynamic buffer per stream. */
+/* copy vertices into the ring and bind them as stream s */
+static int ring_stream(u32 s, const void* src, u32 bytes, u32 stride)
+{
+    if (bytes > RING_SIZE) return 0;
+    u32 pos = (g_ring_pos + stride - 1) / stride * stride, flags = 0x1000;   /* NOOVERWRITE */
+    if (pos + bytes > RING_SIZE) { pos = 0; flags = 0x2000; }                /* DISCARD */
+    u8* dst;
+    if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, pos, bytes, (void**)&dst, flags) < 0) return 0;
+    memcpy(dst, src, bytes);
+    VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
+    g_ring_pos = pos + bytes;
+    g_vb_bytes += bytes;
+    VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, s, g_ring, pos, stride);
+    return 1;
+}
+
+static void draw9(u32 prim, u32 count)
+{
+    u32 n, t = prim9(prim, count, &n);
+    if (!n) return;
+    if (prim == 8) {
+        if (count > MAX_QUADS * 4) count = MAX_QUADS * 4, n = MAX_QUADS * 2;
+        VCALL(g_dev, DEV_DrawIndexedPrimitive, PFN_DrawIdx)(g_dev, 4, 0, 0, count, 0, n);
+    } else
+        VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, 0, n);
+}
+
+/* Vertices from Xbox memory (stream data). */
 static void draw_streams(u32 prim, u32 start, u32 count)
 {
-    u32 nidx = prim == 8 ? quad_indices(count) : 0;
-    u32 verts = nidx ? nidx : count;
+    if (!ring_init()) return;
     for (u32 s = 0; s < 16; s++) {
-        if (!g_stream[s]) continue;
-        u32 stride = g_stride[s], need = verts * stride;
-        if (!need) continue;
-        if (need > g_vb9_size[s]) {
-            if (g_vb9[s]) VCALL(g_vb9[s], 2, PFN_Scene)(g_vb9[s]);
-            g_vb9_size[s] = need > 0x100000 ? need : 0x100000;
-            g_vb9[s] = NULL;
-            VCALL(g_dev, DEV_CreateVertexBuffer, PFN_CreateVB)(g_dev, g_vb9_size[s], 0x208 /* DYNAMIC|WRITEONLY */,
-                                                               0, 0 /* DEFAULT */, &g_vb9[s], NULL);
-        }
-        if (!g_vb9[s]) return;
-        u8* dst;
-        if (VCALL(g_vb9[s], 11, PFN_VBLock)(g_vb9[s], 0, need, (void**)&dst, 0x2000 /* DISCARD */) < 0) return;
-        const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * stride;
-        if (nidx) for (u32 k = 0; k < nidx; k++) memcpy(dst + k * stride, src + g_quad_idx[k] * stride, stride);
-        else memcpy(dst, src, need);
-        VCALL(g_vb9[s], 12, PFN_VBUnlock)(g_vb9[s]);
-        VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, s, g_vb9[s], 0, stride);
+        if (!g_stream[s] || !g_stride[s]) continue;
+        const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * g_stride[s];
+        if (!ring_stream(s, src, count * g_stride[s], g_stride[s])) return;
     }
-    u32 n, t = prim9(prim, verts, &n);
-    if (n) VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, 0, n);
+    draw9(prim, count);
 }
 
 /* env PC_TRACE=<frame>: log every draw of that frame (and its vertex shader /
@@ -410,16 +473,11 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
     g_stat_draw_up++;
     trace_draw("[pc] DrawVerticesUP\n", prim, count, data, stride);
     if (!g_dev || !data || !count) return;
+    u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
-    if (prim == 8) {
-        u32 nidx = quad_indices(count);
-        VCALL(g_dev, DEV_DrawIndexedPrimitiveUP, PFN_DrawIdxUP)(g_dev, 4, 0, count, nidx / 3, g_quad_idx,
-                                                                101 /* INDEX16 */, data, stride);
-        return;
-    }
-    u32 n, t = prim9(prim, count, &n);
-    if (n) VCALL(g_dev, DEV_DrawPrimitiveUP, PFN_DrawUP)(g_dev, t, n, data, stride);
+    if (ring_init() && ring_stream(0, data, count * stride, stride)) draw9(prim, count);
+    g_us_draw += us_since(t0);
 }
 
 /* DrawVertices(PrimitiveType, StartVertex, VertexCount) from the stream sources */
@@ -429,9 +487,11 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
     trace_draw("[pc] DrawVertices\n", prim, count,
                g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
     if (!g_dev || !count) return;
+    u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
     draw_streams(prim, start, count);
+    g_us_draw += us_since(t0);
 }
 
 /* ------------------------------------------------------------ screenshots */

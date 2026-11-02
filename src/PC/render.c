@@ -65,6 +65,8 @@ static HWND   g_hwnd;
 static u32    g_width = 640, g_height = 480;
 static u32    g_frames;
 static u32    g_stat_draw_up, g_stat_draw, g_stat_tex, g_stat_clear, g_stat_skipped;
+/* timing of the last 64 frames, microseconds */
+static u32    g_us_present, g_us_draw, g_us_upload, g_n_upload, g_vb_bytes, g_frame_t0;
 static void   tex_invalidate(const void* res);
 static void   default_xbox_state(void);
 static void   maybe_screenshot(void);
@@ -170,9 +172,11 @@ u32 WINAPI pc_Swap(u32 flags)
 {
     if (g_dev) {
         maybe_screenshot();
+        u32 t = ticks();
         VCALL(g_dev, DEV_EndScene, PFN_Scene)(g_dev);
         VCALL(g_dev, DEV_Present, PFN_Present)(g_dev, NULL, NULL, NULL, NULL);
         VCALL(g_dev, DEV_BeginScene, PFN_Scene)(g_dev);
+        g_us_present += us_since(t);
     }
     pump();
     if ((++g_frames & 63) == 1) {
@@ -182,6 +186,17 @@ u32 WINAPI pc_Swap(u32 flags)
         log_hex("[pc]   textures", g_stat_tex);
         log_hex("[pc]   clears", g_stat_clear);
         log_hex("[pc]   skipped (vertex shader)", g_stat_skipped);
+        if (g_frame_t0) {
+            u32 us = us_since(g_frame_t0);
+            log_dec("[pc]   fps x10", us ? (u32)(640000000.0f / (float)us) : 0);
+            log_dec("[pc]   us/frame present", g_us_present / 64);
+            log_dec("[pc]   us/frame draw calls", g_us_draw / 64);
+            log_dec("[pc]   us/frame texture upload", g_us_upload / 64);
+            log_dec("[pc]   texture uploads", g_n_upload);
+            log_dec("[pc]   KB/frame vertex copy", g_vb_bytes / 64 / 1024);
+        }
+        g_us_present = g_us_draw = g_us_upload = g_n_upload = g_vb_bytes = 0;
+        g_frame_t0 = ticks();
     }
     return 0;
 }

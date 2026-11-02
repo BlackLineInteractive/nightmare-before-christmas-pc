@@ -23,6 +23,31 @@ static void log_hex(const char* what, u32 v)
     log_str(b);
 }
 
+static void log_dec(const char* what, u32 v)
+{
+    char b[64]; int i = 0;
+    while (*what) b[i++] = *what++;
+    b[i++] = ' ';
+    char d[10]; int n = 0;
+    do { d[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n) b[i++] = d[--n];
+    b[i++] = '\n'; b[i] = 0;
+    log_str(b);
+}
+
+/* microsecond timer (low 32 bits of the counter are enough between two samples) */
+IMPORT BOOL WINAPI QueryPerformanceCounter(u64* c);
+IMPORT BOOL WINAPI QueryPerformanceFrequency(u64* f);
+static float g_us_per_tick;
+static u32 ticks(void)
+{
+    u64 c;
+    if (g_us_per_tick == 0.0f) { u64 f; QueryPerformanceFrequency(&f); g_us_per_tick = 1000000.0f / (float)(u32)f; }
+    QueryPerformanceCounter(&c);
+    return (u32)c;
+}
+static u32 us_since(u32 t0) { return (u32)((float)(ticks() - t0) * g_us_per_tick); }
+
 
 /* ------------------------------------------------------------- watchdog */
 

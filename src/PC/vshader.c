@@ -88,13 +88,40 @@ void FASTCALL pc_SetVertexShaderConstantNotInline(u32 reg, const void* data, u32
     if (reg * 4 + dwords <= 192 * 4) memcpy(XVSC + reg * 4, data, dwords * 4);
 }
 
+/* What the device has, so a draw only sends what changed. */
+static IUnk* g_bound_vs9 = (IUnk*)1, *g_bound_decl9 = (IUnk*)1;
+static u32   g_bound_fvf = 0xFFFFFFFF;
+static float g_consts9[192 * 4];
+static int   g_consts9_valid;
+
+/* constants changed since the last draw, sent as one range */
+static void upload_constants(void)
+{
+    const u32* now = (const u32*)XVSC, *dev = (const u32*)g_consts9;
+    u32 lo = 192, hi = 0;
+    for (u32 r = 0; r < 192; r++) {
+        const u32* a = now + r * 4, *b = dev + r * 4;
+        if (!g_consts9_valid || a[0] != b[0] || a[1] != b[1] || a[2] != b[2] || a[3] != b[3]) {
+            if (r < lo) lo = r;
+            hi = r + 1;
+        }
+    }
+    g_consts9_valid = 1;
+    if (lo >= hi) return;
+    memcpy(g_consts9 + lo * 4, XVSC + lo * 4, (hi - lo) * 16);
+    VCALL(g_dev, DEV_SetVertexShaderConstantF, PFN_SetVSConstF)(g_dev, lo, XVSC + lo * 4, hi - lo);
+}
+
 /* Bind the current shader for a draw. Returns 0 if it cannot be drawn. */
 static int bind_vshader(void)
 {
     int i = vsh_index(g_vshader);
     if (i < 0) {                                         /* fixed-function FVF */
-        VCALL(g_dev, DEV_SetVertexShader9, PFN_SetObj)(g_dev, NULL);
-        VCALL(g_dev, DEV_SetFVF, PFN_SetFVF)(g_dev, g_vshader);
+        if (g_bound_vs9) { VCALL(g_dev, DEV_SetVertexShader9, PFN_SetObj)(g_dev, NULL); g_bound_vs9 = NULL; }
+        if (g_bound_fvf != g_vshader) {
+            VCALL(g_dev, DEV_SetFVF, PFN_SetFVF)(g_dev, g_vshader);
+            g_bound_fvf = g_vshader; g_bound_decl9 = (IUnk*)1;   /* SetFVF replaces the declaration */
+        }
         return 1;
     }
     if (!g_vs9[i]) return 0;
@@ -106,8 +133,11 @@ static int bind_vshader(void)
     c58[0] = w * 0.5f; c58[1] = -h * 0.5f; c58[2] = zs * (vp[5] - vp[4]); c58[3] = 1.0f;
     c59[0] = (float)g_viewport[0] + w * 0.5f; c59[1] = (float)g_viewport[1] + h * 0.5f; c59[2] = zs * vp[4]; c59[3] = 0.0f;
     if (c58[2] == 0.0f) c58[2] = zs;
-    VCALL(g_dev, DEV_SetVertexDeclaration, PFN_SetObj)(g_dev, g_decl9[i]);
-    VCALL(g_dev, DEV_SetVertexShader9, PFN_SetObj)(g_dev, g_vs9[i]);
-    VCALL(g_dev, DEV_SetVertexShaderConstantF, PFN_SetVSConstF)(g_dev, 0, XVSC, 192);
+    if (g_bound_decl9 != g_decl9[i]) {
+        VCALL(g_dev, DEV_SetVertexDeclaration, PFN_SetObj)(g_dev, g_decl9[i]);
+        g_bound_decl9 = g_decl9[i]; g_bound_fvf = 0xFFFFFFFF;
+    }
+    if (g_bound_vs9 != g_vs9[i]) { VCALL(g_dev, DEV_SetVertexShader9, PFN_SetObj)(g_dev, g_vs9[i]); g_bound_vs9 = g_vs9[i]; }
+    upload_constants();
     return 1;
 }
