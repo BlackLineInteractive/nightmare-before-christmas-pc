@@ -108,6 +108,7 @@ typedef HRESULT (WINAPI *PFN_Scene)(IUnk*);
 HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32* pp, u32* ppDevice)
 {
     if (pp && pp[0] && pp[1]) { g_width = pp[0]; g_height = pp[1]; }
+    if (pp) { log_hex("[pc] CreateDevice Flags", pp[10]); log_hex("[pc] CreateDevice RefreshRateInHz", pp[11]); log_hex("[pc] CreateDevice PresentationInterval", pp[12]); }
     start_watchdog();
     CreateThread(NULL, 0, vblank_thread, NULL, 0, NULL);
     log_hex("[pc] CreateDevice width", g_width);
@@ -199,6 +200,7 @@ u32 WINAPI pc_Swap(u32 flags)
         log_hex("[pc]   textures", g_stat_tex);
         log_hex("[pc]   clears", g_stat_clear);
         log_hex("[pc]   skipped (vertex shader)", g_stat_skipped);
+        log_hex("[pc]   PRESENTATIONINTERVAL", ((u32*)0x001e2a94)[126]);
         if (g_frame_t0) {
             u32 us = us_since(g_frame_t0);
             log_dec("[pc]   fps x10", us ? (u32)(640000000.0f / (float)us) : 0);
@@ -385,12 +387,16 @@ void WINAPI pc_SetVBlankCallback_1db4(VBLANKCB cb) { g_vblank_cb[0] = cb; }
 void WINAPI pc_SetVBlankCallback_1db8(VBLANKCB cb) { g_vblank_cb[1] = cb; }
 
 IMPORT HANDLE WINAPI CreateWaitableTimerA(void* sa, BOOL manual, const char* name);
+IMPORT HANDLE WINAPI CreateEventA(void* sa, BOOL manual, BOOL initial, const char* name);
+IMPORT BOOL   WINAPI SetEvent(HANDLE h);
+static HANDLE g_vblank_event;            /* signalled every vblank, for BlockUntilVerticalBlank */
 IMPORT BOOL   WINAPI SetWaitableTimer(HANDLE t, const u64* due, s32 period, void* fn, void* arg, BOOL resume);
 IMPORT u32    WINAPI WaitForSingleObject(HANDLE h, u32 ms);
 
 static u32 WINAPI vblank_thread(void* arg)
 {
     HANDLE t = CreateWaitableTimerA(NULL, 0, NULL);
+    if (!g_vblank_event) g_vblank_event = CreateEventA(NULL, 0, 0, NULL);
     u64 due = (u64)-166667;                  /* 16.7 ms, relative */
     SetWaitableTimer(t, &due, 17, NULL, NULL, 0);
     for (;;) {
@@ -399,7 +405,13 @@ static u32 WINAPI vblank_thread(void* arg)
         g_vblank_data[1] = g_frames;
         for (int i = 0; i < 2; i++)
             if (g_vblank_cb[i]) g_vblank_cb[i](g_vblank_data);
+        SetEvent(g_vblank_event);
     }
 }
 u32  WINAPI pc_Get1(u32 v) { return 0; }
-void WINAPI pc_BlockUntilVerticalBlank(void) { Sleep(0); }
+/* waits for the next vblank like the Xbox (Sleep(0) let the menus run as fast as they could) */
+void WINAPI pc_BlockUntilVerticalBlank(void)
+{
+    if (g_vblank_event) WaitForSingleObject(g_vblank_event, 50);
+    else Sleep(16);
+}
