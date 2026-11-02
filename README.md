@@ -7,6 +7,8 @@
 [![Graphics](https://img.shields.io/badge/Renderer-Direct3D%209%20%2F%20OpenGL-orange.svg)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui-purple.svg)](https://github.com/ocornut/imgui)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Patreon](https://img.shields.io/badge/Patreon-Support-F96854?logo=patreon&logoColor=white)](https://www.patreon.com/BlacklineInteractive)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Donate-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/blacklineinteractive)
 
 <p align="center">
   <img src="media/cover.webp" alt="The Nightmare Before Christmas: Oogie's Revenge" width="300">
@@ -44,6 +46,7 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 - [3D Stage Viewer & Research Toolkit](#3d-stage-viewer--research-toolkit)
 - [Technical Documentation](#technical-documentation)
 - [Project Structure](#project-structure)
+- [Support & Sponsor](#️-support--sponsor)
 - [License](#license)
 
 ---
@@ -229,6 +232,17 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
     ├── structure_stm.py     # catalogues extracted stages for the viewer
     └── legacy/              # early prototypes, not used
 ```
+
+---
+
+## ❤️ Support & Sponsor
+
+If you enjoy this project and want to support its active development, reverse-engineering research, and hardware testing, consider supporting us:
+
+- **Ko-fi:** [ko-fi.com/blacklineinteractive](https://ko-fi.com/blacklineinteractive)
+- **Patreon:** [patreon.com/BlacklineInteractive](https://www.patreon.com/BlacklineInteractive)
+
+Every bit of support helps keep the project moving forward towards a fully playable PC release!
 
 ---
 
