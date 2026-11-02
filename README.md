@@ -19,13 +19,14 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 
 ## In-Game Screenshots (Native PC Port running under Wine / Direct3D 9)
 
-| In-Game Gameplay (Jack in Halloween Town) | Chapter 1: Jack's Return (In-Game 3D) |
+
+| Title Screen (*Press Start Button*) | Options Menu |
 | :---: | :---: |
-| ![In-Game Gameplay](media/pc-gameplay-jack.png) | ![Chapter 1: Jack's Return](media/pc-chapter-1-jacks-return.png) |
-| **Title Screen (*Press Start Button*)** | **Options Menu** |
 | ![Title Screen](media/pc-title-screen.webp) | ![Options Menu](media/pc-options-menu.png) |
-| **Action Menu (Soul Robber)** | **Inventory & Item Menu** |
-| ![Action Menu](media/pc-action-menu.png) | ![Inventory Menu](media/pc-inventory-menu.png) |
+| **Chapter 1: Jack's Return (Intro)** | **Cinematic Cutscene (Jack at Town Hall)** |
+| ![Chapter 1: Jack's Return](media/pc-chapter-1-jacks-return.png) | ![Cinematic Cutscene](media/pc-cutscene-jack.png) |
+| **Active 3D Gameplay (Halloween Town)** | **In-Game Action Menu (Soul Robber)** |
+| ![Active 3D Gameplay](media/pc-gameplay-jack.png) | ![Action Menu](media/pc-action-menu.png) |
 
 > **Current Status:** The PC port boots directly into **active 3D gameplay** on Windows and under Wine on macOS. Jack Skellington (skeletal animation, Soul Robber, dynamic shadow projection), full 3D environments, 2D HUD overlays, and in-game pause/inventory menus are working. Sound (XACT stubs) and FMVs are in active development.
 
@@ -107,7 +108,7 @@ Static analysis confirmed **the game code itself (`0x12000`-`0x1A0000`) never ca
 | **XAPI + LIBC** | `.text` `0x1A0000`-`0x1D22A8` | 320 | Direct jumps to Win32 `kernel32.dll` / `ntdll.dll` |
 | **D3D8 (NV2A)** | `D3D` | 37 | Direct3D 9 backend (`src/PC/render.c`, `draw.c`, `vshader.c`) |
 | **XPP (Input)** | `XPP` | 160 | XInput + Keyboard mapping (`src/PC/input.c`) |
-| **XACT / DSOUND**| `XACTENG` / `DSOUND` | 326 | Audio stubs & notification pumps (`src/PC/audio.c`) |
+| **XACT / DSOUND** | `XACTENG` / `DSOUND` | 326 | Audio stubs & notification pumps (`src/PC/audio.c`) |
 | **WMADEC** | `WMADEC` | 13 | Audio decoder (stubbed) |
 
 ---
