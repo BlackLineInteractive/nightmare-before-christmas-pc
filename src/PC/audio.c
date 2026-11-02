@@ -28,9 +28,32 @@ void    WINAPI pc_XACTEngineDoWork(void) { }
 /* IXACTEngine */
 HRESULT WINAPI pc_XACT_CreateSoundSource(void* e, u32 flags, void** pp) { *pp = dummy(); return S_OK; }
 HRESULT WINAPI pc_XACT_CreateSoundBank(void* e, const void* buf, u32 size, void** pp) { *pp = dummy(); return S_OK; }
-HRESULT WINAPI pc_XACT_RegisterWaveBank(void* e, const void* data, u32 size, void** pp) { *pp = dummy(); return S_OK; }
-HRESULT WINAPI pc_XACT_RegisterStreamedWaveBank(void* e, const void* params, void** pp) { *pp = dummy(); return S_OK; }
-HRESULT WINAPI pc_XACT_GetNotification(void* e, const void* desc, void* out) { return E_FAIL; }  /* none pending */
+/* Wave banks are "prepared" at once: each registration queues the
+ * WAVEBANKPREPARED notification the game waits for before it goes on
+ * (sound init thread, 0x1acf31). */
+#define XACTNOTIFICATIONTYPE_WAVEBANKPREPARED 3
+static void* g_prepared[16];
+static u32   g_prepared_head, g_prepared_tail;
+
+static void* wave_bank(void)
+{
+    void* wb = dummy();
+    g_prepared[g_prepared_tail++ & 15] = wb;
+    return wb;
+}
+
+HRESULT WINAPI pc_XACT_RegisterWaveBank(void* e, const void* data, u32 size, void** pp) { *pp = wave_bank(); return S_OK; }
+HRESULT WINAPI pc_XACT_RegisterStreamedWaveBank(void* e, const void* params, void** pp) { *pp = wave_bank(); return S_OK; }
+
+/* GetNotification(pEngine, pNotificationDesc, pNotification): +0 WORD type, +4 pWaveBank */
+HRESULT WINAPI pc_XACT_GetNotification(void* e, const void* desc, void* out)
+{
+    if (g_prepared_head == g_prepared_tail) return E_FAIL;           /* none pending */
+    u8* n = out;
+    *(u16*)n = XACTNOTIFICATIONTYPE_WAVEBANKPREPARED; *(u16*)(n + 2) = 0;
+    *(void**)(n + 4) = g_prepared[g_prepared_head++ & 15];
+    return S_OK;
+}
 HRESULT WINAPI pc_XACT_Out2(void* e, u32* out) { if (out) *out = 0; return S_OK; }
 HRESULT WINAPI pc_XACT_GetCueIndex(void* sb, const char* name, u32* index) { *index = 0; return S_OK; }
 

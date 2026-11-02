@@ -107,11 +107,12 @@ Produces `rom/extracted/default_pc.exe`: the XBE mapped 1:1 at its native base `
 1. **NV2A hardware access patched out:** `D3D_WaitGPUReady` spin-wait (`0x001dc611`), device init (`0x001dc2d1`), chip detection (`0x001dc2fc`), PMC interrupt status reads (`0xFD40014C`) at `0x001dbc1d` / `0x001dbe5f` / `0x001dc00f`, XPP USB MMIO write (`0x0025c41f`).
 2. **XAPI → Windows** ([`tools/xapi_port.py`](tools/xapi_port.py)): 50 XAPI functions jump to their `kernel32.dll` twins, 7 have small replacements, KPCR / TLS accesses use the Windows TEB, `D:\` and the other drive paths point at the game folder. Kernel thunks still used by LIBC go to `ntdll` / `kernel32`; any other kernel ordinal is a trap that logs its caller and exits.
 3. **Xbox libraries → `src/PC/`** ([`tools/pc_render.py`](tools/pc_render.py)): D3D8 → Direct3D 9 (`render.c`, `draw.c`; the game's NV2A vertex programs are translated to HLSL by [`tools/nv2a_vsh.py`](tools/nv2a_vsh.py)), XPP → XInput + keyboard (`input.c`), contiguous memory → a 64 MB pool mapped at `0x80000000` / `0xF0000000` (`memory.c`), XACT / DirectSound → silent stubs (`audio.c`).
-4. **Boot:** a new entry point runs the C runtime start-up (`_rtinit`, `_cinit`) and then the game's main (`0x001aef10`).
+4. **Movies skipped for now:** `BinkOpen` (`0x0022dd50`) returns NULL, so the game goes straight past the Bink videos (the statically linked Bink decoder still crashes, and plays its sound through the Xbox DirectSound).
+5. **Boot:** a new entry point runs the C runtime start-up (`_rtinit`, `_cinit`) and then the game's main (`0x001aef10`).
 
 The only imports are Windows DLLs (`kernel32`, `ntdll`, `user32`, `d3d9`, `d3dcompiler_47`, `xinput9_1_0`), so there is no `xboxkrnl.dll`.
 
-> **Status:** the exe starts on Windows and under Wine on macOS, runs the game's boot code and shows the *Now Loading* screen with the animated Jack. There is no sound yet (XACT is stubbed), and the render-target / `CopyRects` / scissor calls are still no-ops.
+> **Status:** the exe starts on Windows and under Wine on macOS, gets through the *Now Loading* screen and reaches the title screen (*Press Start Button*). There is no sound yet (XACT is stubbed and reports wave banks as prepared at once), movies are skipped, and the render-target / `CopyRects` / scissor calls are still no-ops.
 
 ### Running the port
 
@@ -127,6 +128,7 @@ Debug switches (environment variables):
 | :--- | :--- |
 | `PC_SHOT=<n>` | Save the back buffer to `shot_<frame>.bmp` at frames *n*, 3*n* and 6*n* (**F12** saves one at any time) |
 | `PC_DUMPTEX=1` | Write every texture the renderer uploads to `tex_<header address>.bin` (20-byte Xbox resource header + data) |
+| `PC_TRACE=<n>` | Log every draw of frame *n*: primitive, vertex count, stride, vertex shader / FVF, texture 0 format, blend state and the first vertex |
 | `PC_FLAT=1` / `2` | Draw with vertex colour only / texture × vertex colour, ignoring the game's render state |
 
 Every 64 frames the renderer logs draw, texture and clear counts to stdout, and a watchdog thread logs where each game thread is every 8 seconds.

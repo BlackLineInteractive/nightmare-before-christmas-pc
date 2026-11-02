@@ -383,10 +383,32 @@ static void draw_streams(u32 prim, u32 start, u32 count)
     if (n) VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, 0, n);
 }
 
+/* env PC_TRACE=<frame>: log every draw of that frame (and its vertex shader /
+ * FVF, texture 0 and first vertex) */
+static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32 stride)
+{
+    static u32 at = 0xFFFFFFFF;
+    if (at == 0xFFFFFFFF) {
+        char b[16]; u32 n = GetEnvironmentVariableA("PC_TRACE", b, sizeof b);
+        at = 0;
+        for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
+    }
+    if (!at || g_frames != at) return;
+    log_str(what);
+    log_hex("  prim", prim); log_hex("  count", count); log_hex("  stride", stride);
+    log_hex("  vshader", g_vshader);
+    const u32* t = (const u32*)g_textures[0];
+    log_hex("  tex0 format", t ? t[3] : 0);
+    log_hex("  colorop0", XTS(0, XTS_COLOROP)); log_hex("  tfactor", XRS(XRS_TEXTUREFACTOR));
+    log_hex("  blend on", XRS(XRS_ALPHABLENDENABLE)); log_hex("  src", XRS(XRS_SRCBLEND)); log_hex("  dst", XRS(XRS_DESTBLEND));
+    if (v) for (u32 i = 0; i < stride / 4 && i < 8; i++) log_hex("  v0", ((const u32*)v)[i]);
+}
+
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
 void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
+    trace_draw("[pc] DrawVerticesUP\n", prim, count, data, stride);
     if (!g_dev || !data || !count) return;
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
@@ -404,6 +426,8 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
 {
     g_stat_draw++;
+    trace_draw("[pc] DrawVertices\n", prim, count,
+               g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
     if (!g_dev || !count) return;
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();

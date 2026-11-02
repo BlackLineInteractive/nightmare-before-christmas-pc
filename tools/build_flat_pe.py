@@ -102,6 +102,14 @@ def build_flat_binary(xbe_path, pe_path):
     image_mem[p5_off : p5_off + 5] = b'\x90\x90\x90\x90\x90'
     print(f"[+] [PATCH 5] Neutralized XPP MMIO write at VA 0x0025c41f")
 
+    # Patch 6: BinkOpen at VA 0x0022dd50 -> xor eax, eax; ret 8
+    # The movies are skipped (the game goes on when BinkOpen fails): the
+    # statically linked Bink decoder crashes on a bad plane pitch and plays
+    # its sound through the Xbox DirectSound. Remove once Bink works.
+    p6_off = 0x0022dd50 - base_addr
+    image_mem[p6_off : p6_off + 5] = b'\x31\xC0\xC2\x08\x00'
+    print(f"[+] [PATCH 6] Movies skipped (BinkOpen at VA 0x0022dd50 -> NULL)")
+
     # 4. XAPI -> Windows (tools/xapi_port.py): XAPI functions jump into
     #    kernel32.dll, kernel thunks still used by LIBC go to ntdll/kernel32,
     #    KPCR / TLS accesses use the Windows TEB, paths are made relative.

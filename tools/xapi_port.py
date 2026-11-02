@@ -77,6 +77,7 @@ XAPI_TO_STUB = {
     0x1bdcf2: 'XGetLanguage',
     0x1bde89: 'XGetVideoFlags',
     0x1bded2: 'XGetAVPack',
+    0x1bf591: 'XGetAudioFlags',
     0x1bdd1f: 'XLaunchNewImageA',
     0x1bdaa9: 'XRegisterThreadNotifyRoutine',
     0x1bdaf2: 'XSetProcessQuantumLength',
@@ -413,6 +414,8 @@ def build_port_section(image_mem, base, sec_rva, kernel_names, renderer=None):
     stub('XGetVideoFlags')
     a.xor_eax(); a.ret()
     stub('XGetAVPack')
+    a.xor_eax(); a.ret()
+    stub('XGetAudioFlags')        # stereo, no Dolby
     a.xor_eax(); a.ret()
     stub('XLaunchNewImageA')      # "return to dashboard" = quit
     a.push(0); a.call_mem(iat['ExitProcess'])
