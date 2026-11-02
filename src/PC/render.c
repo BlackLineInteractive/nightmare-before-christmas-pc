@@ -210,9 +210,11 @@ static void frame_pacing(void)
     last = now;
     /* behind by a frame or more: release the next one now instead of at the
      * next vblank (a vblank missed during a slow frame is otherwise lost) */
-    if (g_frameskip && debt >= 16667) vblank_fire();
+    if (g_frameskip && debt >= 33333) vblank_fire();
     if (g_skip_render) { g_stat_undrawn++; skipped_in_row++; } else skipped_in_row = 0;
-    g_skip_render = g_frameskip && debt > 20000 && skipped_in_row < 2;
+    /* skip only when a whole frame behind, and never two drawn frames apart
+     * when barely late: a frame a little over 16.7 ms is fine */
+    g_skip_render = g_frameskip && debt > 33333 && skipped_in_row < 2;
 }
 
 /* Swap(Flags) */

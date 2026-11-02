@@ -111,10 +111,72 @@ static u32 WINAPI watchdog(void* arg)
         CloseHandle(snap);
     }
 }
+/* PC_PROFILE=1: sample the game's main thread about every millisecond and
+ * every 5 s log where it was. A sample in Windows / Wine code is counted at
+ * the first return address into the exe on the stack (the caller there). */
+#define PROF_SLOTS 4096
+static u32 g_prof_addr[PROF_SLOTS], g_prof_hits[PROF_SLOTS];
+
+static u32 exe_caller(u32 esp)
+{
+    u32* sp = (u32*)esp;
+    int n = 256;
+    while (n && IsBadReadPtr(sp, n * 4)) n /= 2;
+    for (int i = 0; i < n; i++) {
+        u32 r = sp[i];
+        if (r < 0x12006 || r >= 0x4F0000) continue;
+        const u8* c = (const u8*)r;
+        if (IsBadReadPtr(c - 6, 6)) continue;          /* past the end of the image */
+        if (c[-5] == 0xE8 || (c[-6] == 0xFF && (c[-5] & 0x38) == 0x10) || (c[-2] == 0xFF && (c[-1] & 0x38) == 0x10))
+            return r;
+    }
+    return 0;
+}
+
+static u32 WINAPI profiler(void* arg)
+{
+    static u32 ctx[0x2CC / 4];
+    u32 total = 0, t0 = ticks(), area[4] = { 0 };       /* game, Xbox libraries, port, outside the exe */
+    for (;;) {
+        Sleep(1);
+        SuspendThread(g_main_thread);
+        ctx[0] = 0x10001;
+        BOOL ok = GetThreadContext(g_main_thread, ctx);
+        u32 eip = ctx[0xB8 / 4], esp = ctx[0xC4 / 4];
+        ResumeThread(g_main_thread);
+        u32 at = ok ? (eip >= 0x12000 && eip < 0x4F0000 ? eip : exe_caller(esp)) : 0;
+        if (!ok) continue;
+        total++;
+        area[eip < 0x1A0000 ? 0 : eip < 0x431000 ? 1 : eip < 0x4F0000 ? 2 : 3]++;
+        u32 key = at & ~15u, h = (key >> 4) & (PROF_SLOTS - 1);
+        for (u32 k = 0; k < PROF_SLOTS; k++, h = (h + 1) & (PROF_SLOTS - 1))
+            if (g_prof_addr[h] == key || !g_prof_hits[h]) { g_prof_addr[h] = key; g_prof_hits[h]++; break; }
+        if (us_since(t0) < 5000000) continue;
+        log_dec("[pc] profile samples", total);
+        log_dec("[pc]   % game code", area[0] * 100 / total);
+        log_dec("[pc]   % Xbox libraries", area[1] * 100 / total);
+        log_dec("[pc]   % port (src/PC)", area[2] * 100 / total);
+        log_dec("[pc]   % Windows / Wine", area[3] * 100 / total);
+        for (int top = 0; top < 12; top++) {
+            u32 best = 0;
+            for (u32 k = 1; k < PROF_SLOTS; k++) if (g_prof_hits[k] > g_prof_hits[best]) best = k;
+            if (!g_prof_hits[best]) break;
+            log_hex("[pc]   hot (address)", g_prof_addr[best]);
+            log_dec("[pc]       % of samples", g_prof_hits[best] * 100 / total);
+            g_prof_hits[best] = 0;
+        }
+        for (u32 k = 0; k < PROF_SLOTS; k++) g_prof_hits[k] = g_prof_addr[k] = 0;
+        total = area[0] = area[1] = area[2] = area[3] = 0;
+        t0 = ticks();
+    }
+}
+
 static void start_watchdog(void)
 {
     g_main_thread = OpenThread(0x1FFFFF, 0, GetCurrentThreadId());
     CreateThread(NULL, 0, watchdog, NULL, 0, NULL);
+    char b[4];
+    if (GetEnvironmentVariableA("PC_PROFILE", b, 4) > 0) CreateThread(NULL, 0, profiler, NULL, 0, NULL);
 }
 
 /* XAPI CreateFileA: kernel32's; PC_FILELOG=1 logs every file that fails to

@@ -32,6 +32,7 @@ IMPORT void   WINAPI OutputDebugStringA(const char* s);
 IMPORT HANDLE WINAPI GetStdHandle(u32 n);
 IMPORT BOOL   WINAPI WriteFile(HANDLE h, const void* p, u32 n, u32* done, void* ov);
 IMPORT void   WINAPI Sleep(u32 ms);
+IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n);
 
 #define MEM_COMMIT     0x1000
 #define MEM_RESERVE    0x2000

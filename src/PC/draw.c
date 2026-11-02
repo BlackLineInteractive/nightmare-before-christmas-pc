@@ -119,7 +119,7 @@ static u32 map_colorwrite(u32 v)   /* Xbox: R<<16, G<<8, B, A<<24 */
 
 /* ---------------------------------------------------------- texture cache */
 
-typedef struct { u32 key, data, format, size, frame; IUnk* tex; } TexEntry;
+typedef struct { u32 key, data, format, size, frame, sum; IUnk* tex; } TexEntry;
 static TexEntry g_tex_cache[1024];
 
 static void tex_invalidate(const void* res)
@@ -240,9 +240,21 @@ static IUnk* upload_texture(const u32* res)
 }
 
 /* A texture header the game built itself (not ours, see XRes.self in
- * render.c): Bink decodes each movie frame straight into its memory, so it
- * is uploaded again once per frame. */
+ * render.c): Bink decodes each movie frame straight into its memory, so once
+ * a frame its contents are checked (a sparse checksum) and it is uploaded
+ * again when they changed. */
 static int tex_foreign(const u32* res) { return res[12] != (u32)res; }
+static u32 tex_sum(const u32* res)
+{
+    u32 f = (res[3] >> 8) & 0xFF, sz = res[4], w, h;
+    if (sz) { w = (sz & 0xFFF) + 1; h = ((sz >> 12) & 0xFFF) + 1; }
+    else { w = 1u << ((res[3] >> 20) & 15); h = 1u << ((res[3] >> 24) & 15); }
+    u32 bytes = sz ? ((sz >> 24) + 1) * 64 * h : level_bytes(f, w, h);
+    const u32* p = (const u32*)(res[1] | 0x80000000u);
+    u32 n = bytes / 4, step = n / 509 + 1, s = 0;
+    for (u32 i = 0; i < n; i += step) s = s * 31 + p[i];
+    return s;
+}
 
 static IUnk* get_texture(const u32* res)
 {
@@ -252,6 +264,9 @@ static IUnk* get_texture(const u32* res)
         TexEntry* e = &g_tex_cache[(slot + i) & 1023];
         if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) {
             if (e->frame == g_frames || !tex_foreign(res)) return e->tex;
+            e->frame = g_frames;
+            u32 sum = tex_sum(res);
+            if (sum == e->sum) return e->tex;
             e->key = 0;
         }
         if (!e->key) {
@@ -260,6 +275,7 @@ static IUnk* get_texture(const u32* res)
             e->tex = upload_texture(res);
             g_us_upload += us_since(t); g_n_upload++;
             e->key = (u32)res; e->data = res[1]; e->format = res[3]; e->size = res[4]; e->frame = g_frames;
+            e->sum = tex_foreign(res) ? tex_sum(res) : 0;
             return e->tex;
         }
     }
@@ -615,9 +631,13 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
         for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
     }
     if (!enabled) return;
-    u32 key = (GetAsyncKeyState('T') & 0x8000) != 0;
-    if (key && !key_was) { at = g_frames + 1; log_hex("[pc] trace at frame", at); }
-    key_was = key;
+    static u32 key_frame = 0xFFFFFFFF;
+    if (key_frame != g_frames) {                 /* the T key: once a frame (each poll is a Wine call) */
+        key_frame = g_frames;
+        u32 key = (GetAsyncKeyState('T') & 0x8000) != 0;
+        if (key && !key_was) { at = g_frames + 1; log_hex("[pc] trace at frame", at); }
+        key_was = key;
+    }
     if (!g_trace_auto && what[5] == 'V') { g_trace_auto = 1; at = g_frames + 300; log_hex("[pc] trace at frame", at); }
     g_trace_frame = at;
     if (!at || g_frames != at) return;
