@@ -310,10 +310,13 @@ static void apply_state(void)
     rs(RS_ZENABLE, XRS(XRS_ZENABLE) ? 1 : 0);
     rs(RS_ZFUNC, map_cmp(XRS(XRS_ZFUNC)));
     rs(RS_ZWRITEENABLE, XRS(XRS_ZWRITEENABLE) ? 1 : 0);
-    rs(RS_ALPHABLENDENABLE, XRS(XRS_ALPHABLENDENABLE) ? 1 : 0);
-    rs(RS_SRCBLEND, map_blend(XRS(XRS_SRCBLEND)));
-    rs(RS_DESTBLEND, map_blend(XRS(XRS_DESTBLEND)));
-    rs(RS_BLENDOP, map_blendop(XRS(XRS_BLENDOP)));
+    /* Colour writes off (shadow-volume passes): wined3d still wrote colour with
+     * COLORWRITEENABLE 0, so such draws blend ZERO, ONE instead (keep the pixel). */
+    u32 cw = map_colorwrite(XRS(XRS_COLORWRITEENABLE));
+    rs(RS_ALPHABLENDENABLE, cw == 0 || XRS(XRS_ALPHABLENDENABLE) ? 1 : 0);
+    rs(RS_SRCBLEND, cw == 0 ? 1 /* ZERO */ : map_blend(XRS(XRS_SRCBLEND)));
+    rs(RS_DESTBLEND, cw == 0 ? 2 /* ONE */ : map_blend(XRS(XRS_DESTBLEND)));
+    rs(RS_BLENDOP, cw == 0 ? 1 /* ADD */ : map_blendop(XRS(XRS_BLENDOP)));
     rs(RS_ALPHATESTENABLE, XRS(XRS_ALPHATESTENABLE) ? 1 : 0);
     rs(RS_ALPHAFUNC, map_cmp(XRS(XRS_ALPHAFUNC)));
     rs(RS_ALPHAREF, XRS(XRS_ALPHAREF) & 0xFF);
@@ -332,7 +335,7 @@ static void apply_state(void)
         rs(RS_STENCILPASS, map_stencilop(XRS(XRS_STENCILPASS)));
     }
     rs(RS_TEXTUREFACTOR, XRS(XRS_TEXTUREFACTOR));
-    rs(RS_COLORWRITEENABLE, map_colorwrite(XRS(XRS_COLORWRITEENABLE)));   /* 0 = no colour (stencil-only passes) */
+    rs(RS_COLORWRITEENABLE, cw ? cw : 15);
 
     int ps = bind_pshader();
     for (u32 s = 0; s < 4; s++) {
@@ -499,7 +502,7 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     /* the back buffer before each change of vertex shader: where the frame goes wrong */
     static u32 last_vsh = 0xFFFFFFFF;
     if (g_vshader != last_vsh && g_shot_tag < 40) { last_vsh = g_vshader; g_shot_tag++; save_screenshot(); }
-    char b[256], *p = b;
+    char b[512], *p = b;              /* ~30 fields of 9 characters */
     while (*what) *p++ = *what++;
     const u32* t = (const u32*)g_textures[0];
     p = hx(p, prim); p = hx(p, count); p = hx(p, stride); p = hx(p, g_vshader); p = hx(p, t ? t[3] : 0);
@@ -509,10 +512,22 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     p = hx(p, g_pshader); p = hx(p, XTS(0, XTS_COLOROP) << 16 | XTS(0, XTS_COLORARG1) << 8 | XTS(0, XTS_COLORARG2));
     p = hx(p, XTS(1, XTS_COLOROP));
     p = hx(p, XRS(XRS_COLORWRITEENABLE)); p = hx(p, XRS(XRS_STENCILENABLE) << 16 | XRS(XRS_STENCILFUNC));
+    p = hx(p, XRS(XRS_STENCILREF) << 16 | (XRS(XRS_STENCILMASK) & 0xFF) << 8 | (XRS(XRS_STENCILWRITEMASK) & 0xFF));
+    p = hx(p, XRS(XRS_STENCILFAIL)); p = hx(p, XRS(XRS_STENCILZFAIL)); p = hx(p, XRS(XRS_STENCILPASS));
+    p = hx(p, XRS(XRS_ZWRITEENABLE)); p = hx(p, ((const u32*)0x001e1c70)[25 * 4 + 3]);
     *p++ = ' '; *p++ = '|';
     if (v) for (u32 i = 0; i < stride / 4 && i < 6; i++) p = hx(p, ((const u32*)v)[i]);
     *p++ = '\n'; *p = 0;
     log_str(b);
+}
+
+/* Stencil shadows: the shading pass (stencil on, colour on) still comes out
+ * black over the whole frame, so it is skipped unless env PC_SHADOWS=1. */
+static int skip_shadow_pass(void)
+{
+    static int shadows = -1;
+    if (shadows < 0) { char b[4]; shadows = GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 && b[0] == '1'; }
+    return !shadows && XRS(XRS_STENCILENABLE) && XRS(XRS_COLORWRITEENABLE);
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
@@ -520,7 +535,7 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
     trace_draw("[tr] UP", prim, count, data, stride);
-    if (!g_dev || !data || !count) return;
+    if (!g_dev || !data || !count || skip_shadow_pass()) return;
     u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
@@ -534,7 +549,7 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
     g_stat_draw++;
     trace_draw("[tr] VB", prim, count,
                g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
-    if (!g_dev || !count) return;
+    if (!g_dev || !count || skip_shadow_pass()) return;
     u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();

@@ -155,13 +155,21 @@ HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32
     return 0;
 }
 
-/* Clear(Count, pRects, Flags, Color, Z, Stencil) — Xbox flags: Z=1, STENCIL=2, TARGET=0xF0 */
+/* Clear(Count, pRects, Flags, Color, Z, Stencil) — Xbox flags: Z=1, STENCIL=2, TARGET=0xF0 (R, G, B, A) */
 HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, float z, u32 stencil)
 {
     g_stat_clear++;
     if (!g_dev) return 0;
     u32 f = 0;
-    if (flags & 0xF0) f |= D3DCLEAR_TARGET;
+    /* Xbox clears the colour channels one by one (R 0x10, G 0x20, B 0x40, A 0x80).
+     * The back buffer is X8R8G8B8: an alpha-only clear (before the shadows) has
+     * nothing to clear; any other partial mask is cleared whole and logged once. */
+    u32 rgba = flags & 0xF0;
+    if (rgba & 0x70) {
+        f |= D3DCLEAR_TARGET;
+        static int logged;
+        if ((rgba & 0x70) != 0x70 && !logged) { logged = 1; log_hex("[pc] Clear with partial colour mask", flags); }
+    }
     if (flags & 1) f |= D3DCLEAR_ZBUFFER;
     if (flags & 2) f |= D3DCLEAR_STENCIL;
     return VCALL(g_dev, DEV_Clear, PFN_Clear)(g_dev, count, rects, f, color, z, stencil);
@@ -329,7 +337,17 @@ void WINAPI pc_SetGammaRamp(u32 flags, const void* ramp)
 }
 
 void FASTCALL pc_SetRenderState_Simple(u32 method, u32 value) { }
-void WINAPI pc_SetRenderState_1(u32 value) { }      /* FogColor, CullMode, ZEnable, ... */
+void WINAPI pc_SetRenderState_1(u32 value) { }      /* RopZCmpAlwaysRead, MultiSampleAntiAlias */
+
+/* The complex render-state setters: the original stores the value in
+ * D3D__RenderState (0x1e2a94) before programming the NV2A; draw.c applies
+ * that array, so the replacements only store it. */
+#define XRS_SLOT(i) (((volatile u32*)0x001e2a94)[i])
+void WINAPI pc_SetRenderState_FogColor(u32 v)      { XRS_SLOT(137) = v; }
+void WINAPI pc_SetRenderState_ZEnable(u32 v)       { XRS_SLOT(142) = v; }
+void WINAPI pc_SetRenderState_StencilEnable(u32 v) { XRS_SLOT(143) = v; }
+void WINAPI pc_SetRenderState_StencilFail(u32 v)   { XRS_SLOT(144) = v; }
+void WINAPI pc_SetRenderState_CullMode(u32 v)      { XRS_SLOT(146) = v; }
 void WINAPI pc_SetTextureState_TexCoordIndex(u32 stage, u32 value) { }
 
 /* ---------------------------------------------------------------- shaders */

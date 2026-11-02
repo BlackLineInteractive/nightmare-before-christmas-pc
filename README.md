@@ -1,6 +1,6 @@
-# OogieEngine - *The Nightmare Before Christmas: Oogie's Revenge*
+# *The Nightmare Before Christmas: Oogie's Revenge* — Native PC Port
 
-### Native C++17 Reverse-Engineering Toolkit & PC Reimplementation Engine
+### Native PC Reimplementation Engine & C++17 Reverse-Engineering Toolkit
 
 [![C++17](https://img.shields.io/badge/Language-C%2B%2B17-blue.svg)](https://en.cppreference.com/w/cpp/17)
 [![Platform](https://img.shields.io/badge/Viewer-macOS-lightgrey.svg)]()
@@ -70,8 +70,8 @@ Topics covered:
 
 ```bash
 # Clone the repository
-git clone https://github.com/vovavovchok/oogie-capcom-engine.git
-cd oogie-capcom-engine
+git clone https://github.com/BlackLineInteractive/nightmare-before-christmas-pc.git
+cd nightmare-before-christmas-pc
 
 # Configure and compile
 cmake -B build -DCMAKE_BUILD_TYPE=Release
