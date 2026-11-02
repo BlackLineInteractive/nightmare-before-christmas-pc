@@ -119,7 +119,7 @@ static u32 map_colorwrite(u32 v)   /* Xbox: R<<16, G<<8, B, A<<24 */
 
 /* ---------------------------------------------------------- texture cache */
 
-typedef struct { u32 key, data, format, size; IUnk* tex; } TexEntry;
+typedef struct { u32 key, data, format, size, frame; IUnk* tex; } TexEntry;
 static TexEntry g_tex_cache[1024];
 
 static void tex_invalidate(const void* res)
@@ -194,7 +194,8 @@ static IUnk* upload_texture(const u32* res)
     if (!levels) levels = 1;
     const u8* src = (const u8*)(data | 0x80000000u);
     int dxt = xfmt_dxt(f);
-    u32 d3dfmt = f == 0x0C ? 0x31545844 : f == 0x0E ? 0x33545844 : f == 0x0F ? 0x35545844 : 21;
+    int l8 = f == 0x13;                            /* linear L8 (Bink's planes): copied as is */
+    u32 d3dfmt = f == 0x0C ? 0x31545844 : f == 0x0E ? 0x33545844 : f == 0x0F ? 0x35545844 : l8 ? 50 : 21;
     IUnk* tex = NULL;
     if (VCALL(g_dev, DEV_CreateTexture, PFN_CreateTex)(g_dev, w, h, levels, 0, d3dfmt, 1 /* MANAGED */, &tex, NULL) < 0)
         return NULL;
@@ -207,6 +208,10 @@ static IUnk* upload_texture(const u32* res)
             u32 bw = (lw + 3) / 4, bh = (lh + 3) / 4, bs = f == 0x0C ? 8 : 16;
             for (u32 y = 0; y < bh; y++) memcpy((u8*)lr.pBits + y * lr.Pitch, src + y * bw * bs, bw * bs);
             src += bw * bh * bs;
+        } else if (l8) {
+            u32 sp = pitch ? pitch : lw;
+            for (u32 y = 0; y < lh; y++) memcpy((u8*)lr.pBits + y * lr.Pitch, src + y * sp, lw);
+            src += sp * lh;
         } else if (fmt_linear(f)) {
             u32 sp = pitch ? pitch : lw * bpp;
             for (u32 y = 0; y < lh; y++) {
@@ -234,19 +239,27 @@ static IUnk* upload_texture(const u32* res)
     return tex;
 }
 
+/* A texture header the game built itself (not ours, see XRes.self in
+ * render.c): Bink decodes each movie frame straight into its memory, so it
+ * is uploaded again once per frame. */
+static int tex_foreign(const u32* res) { return res[12] != (u32)res; }
+
 static IUnk* get_texture(const u32* res)
 {
     if (!res) return NULL;
     u32 slot = ((u32)res >> 4) & 1023;
     for (u32 i = 0; i < 1024; i++) {
         TexEntry* e = &g_tex_cache[(slot + i) & 1023];
-        if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) return e->tex;
+        if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) {
+            if (e->frame == g_frames || !tex_foreign(res)) return e->tex;
+            e->key = 0;
+        }
         if (!e->key) {
             if (e->tex) VCALL(e->tex, 2, PFN_Scene)(e->tex);      /* Release a stale one */
             u32 t = ticks();
             e->tex = upload_texture(res);
             g_us_upload += us_since(t); g_n_upload++;
-            e->key = (u32)res; e->data = res[1]; e->format = res[3]; e->size = res[4];
+            e->key = (u32)res; e->data = res[1]; e->format = res[3]; e->size = res[4]; e->frame = g_frames;
             return e->tex;
         }
     }
@@ -335,6 +348,21 @@ static void apply_state(void)
     rs(RS_COLORWRITEENABLE, map_colorwrite(XRS(XRS_COLORWRITEENABLE)));   /* 0: stencil-only shadow passes */
 
     int ps = bind_pshader();
+    if (ps) {     /* Xbox linear textures are addressed in texels: c0..c3 = 1 / size, 1 for the others */
+        static float scale[16] = { 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0 };
+        float want[16];
+        for (u32 s = 0; s < 4; s++) {
+            const u32* r = (const u32*)g_textures[s];
+            u32 sz = r ? r[4] : 0;
+            want[s * 4] = sz ? 1.0f / (float)((sz & 0xFFF) + 1) : 1.0f;
+            want[s * 4 + 1] = sz ? 1.0f / (float)(((sz >> 12) & 0xFFF) + 1) : 1.0f;
+            want[s * 4 + 2] = want[s * 4 + 3] = 0;
+        }
+        if (memcmp(want, scale, sizeof want)) {
+            memcpy(scale, want, sizeof want);
+            VCALL(g_dev, DEV_SetPixelShaderConstantF, PFN_SetVSConstF)(g_dev, 0, scale, 4);
+        }
+    }
     for (u32 s = 0; s < 4; s++) {
         IUnk* t = g_textures[s] ? get_texture((const u32*)g_textures[s]) : NULL;
         set_tex9(s, t);

@@ -4,6 +4,7 @@
 #include "win32.h"
 
 void* memcpy(void* d, const void* s, size_t n) { u8* a = d; const u8* b = s; while (n--) *a++ = *b++; return d; }
+int memcmp(const void* x, const void* y, size_t n) { const u8 *a = x, *b = y; for (; n--; a++, b++) if (*a != *b) return *a < *b ? -1 : 1; return 0; }
 void* memset(void* d, int c, size_t n) { u8* a = d; while (n--) *a++ = (u8)c; return d; }
 
 static void log_str(const char* s)

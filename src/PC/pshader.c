@@ -11,6 +11,7 @@
 
 #define DEV_CreatePixelShader9 106
 #define DEV_SetPixelShader9    107
+#define DEV_SetPixelShaderConstantF 109
 
 static IUnk* g_ps9[PSH_COUNT];
 static u32   g_pshader;                           /* Xbox handle: index + 1, 0 = none */

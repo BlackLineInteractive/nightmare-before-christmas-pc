@@ -20,7 +20,8 @@ typedef struct XRes {
     struct XRes* Parent;           /* surfaces: owning texture */
     u32 width, height, levels, xfmt, bytes;
     u8* mem;
-} XRes;
+    struct XRes* self;             /* == this for ours; the game also builds bare */
+} XRes;                            /* 20-byte headers (XGSetTextureHeader + Register) */
 
 #define XCOMMON_TYPE_VERTEXBUFFER 0x00000000
 #define XCOMMON_TYPE_TEXTURE      0x00040000
@@ -30,6 +31,7 @@ static XRes* new_res(u32 common)
 {
     XRes* r = HeapAlloc(GetProcessHeap(), 8, sizeof(XRes));
     r->Common = common | 1;
+    r->self = r;
     return r;
 }
 
@@ -237,6 +239,26 @@ XRes* WINAPI pc_CreateTexture2(u32 w, u32 h, u32 depth, u32 levels, u32 usage, u
     return t;
 }
 
+/* What we need of a texture, from our own fields or, for a bare Xbox
+ * header the game set up itself (Bink's movie planes), from Format / Size /
+ * Data. pitch is 0 unless Size gives one. */
+static XRes* tex_desc(XRes* t, XRes* d, u32* pitch)
+{
+    *pitch = 0;
+    if (t->self == t) return t;
+    u32 f = t->Format, sz = t->Size;
+    d->xfmt = (f >> 8) & 0xFF; d->levels = (f >> 16) & 15;
+    if (sz) {
+        d->width = (sz & 0xFFF) + 1; d->height = ((sz >> 12) & 0xFFF) + 1;
+        *pitch = ((sz >> 24) + 1) * 64; d->levels = 1;
+    } else {
+        d->width = 1u << ((f >> 20) & 15); d->height = 1u << ((f >> 24) & 15);
+    }
+    if (!d->levels) d->levels = 1;
+    d->mem = (u8*)(t->Data | 0x80000000u);
+    return d;
+}
+
 static u8* level_ptr(XRes* t, u32 level, u32* pw, u32* ph)
 {
     u32 off = 0, lw = t->width, lh = t->height;
@@ -251,11 +273,12 @@ static u8* level_ptr(XRes* t, u32 level, u32* pw, u32* ph)
 /* D3DTexture_LockRect(pTexture, Level, pLockedRect, pRect, Flags) */
 HRESULT WINAPI pc_LockRect(XRes* t, u32 level, D3DLOCKED_RECT* lr, const RECT* rect, u32 flags)
 {
-    u32 w, h;
-    u8* p = level_ptr(t, level, &w, &h);
+    XRes tmp; u32 w, h, pitch;
+    XRes* d = tex_desc(t, &tmp, &pitch);
+    u8* p = level_ptr(d, level, &w, &h);
     tex_invalidate(t);
     lr->pBits = p;
-    lr->Pitch = xfmt_dxt(t->xfmt) ? ((w + 3) / 4) * (t->xfmt == 0x0C ? 8 : 16) : w * xfmt_bpp(t->xfmt) / 8;
+    lr->Pitch = pitch ? pitch : xfmt_dxt(d->xfmt) ? ((w + 3) / 4) * (d->xfmt == 0x0C ? 8 : 16) : w * xfmt_bpp(d->xfmt) / 8;
     return 0;
 }
 
@@ -263,16 +286,17 @@ HRESULT WINAPI pc_LockRect(XRes* t, u32 level, D3DLOCKED_RECT* lr, const RECT* r
 XRes* WINAPI pc_GetSurfaceLevel2(XRes* t, u32 level)
 {
     XRes* s = new_res(XCOMMON_TYPE_SURFACE);
-    u32 w, h;
-    s->mem = level_ptr(t, level, &w, &h);
+    XRes tmp; u32 w, h, pitch;
+    XRes* d = tex_desc(t, &tmp, &pitch);
+    s->mem = level_ptr(d, level, &w, &h);
     s->Data = (u32)s->mem & 0x0FFFFFFFu;
-    s->width = w; s->height = h; s->xfmt = t->xfmt; s->levels = 1; s->Parent = t;
+    s->width = w; s->height = h; s->xfmt = d->xfmt; s->levels = 1; s->Parent = t;
     /* The original D3DSurface_LockRect (still used by D3DX) takes the pitch
      * from Size when it is set, so like the Xbox: swizzled / DXT surfaces
      * keep Size 0 and their level's dimensions in Format, linear ones get
      * Size with the pitch. */
     s->Format = (t->Format & 0x0000FFFFu) | (1 << 16) | (log2u(w) << 20) | (log2u(h) << 24);
-    s->Size = fmt_linear(t->xfmt) ? (w - 1) | ((h - 1) << 12) | (((w * xfmt_bpp(t->xfmt) / 8 + 63) / 64 - 1) << 24) : 0;
+    s->Size = fmt_linear(d->xfmt) ? (w - 1) | ((h - 1) << 12) | (((w * xfmt_bpp(d->xfmt) / 8 + 63) / 64 - 1) << 24) : 0;
     return s;
 }
 
@@ -397,10 +421,21 @@ static u32 WINAPI vblank_thread(void* arg)
 {
     HANDLE t = CreateWaitableTimerA(NULL, 0, NULL);
     if (!g_vblank_event) g_vblank_event = CreateEventA(NULL, 0, 0, NULL);
-    u64 due = (u64)-166667;                  /* 16.7 ms, relative */
-    SetWaitableTimer(t, &due, 17, NULL, NULL, 0);
+    /* 60 Hz on average: each vblank has a deadline on the performance
+     * counter (a 17 ms periodic timer gave 58.8 Hz, the game a bit slow) */
+    ticks();
+    float period = 16666.667f / g_us_per_tick, frac = 0;
+    u32 next = ticks();
     for (;;) {
-        WaitForSingleObject(t, 0xFFFFFFFF);
+        frac += period;
+        next += (u32)frac; frac -= (float)(u32)frac;
+        s32 left = (s32)(next - ticks());
+        if (left < -(s32)(4 * period)) next = ticks();          /* fell far behind: resync */
+        else if (left > 0) {
+            u64 due = 0 - (u64)(u32)((float)left * g_us_per_tick * 10.0f);  /* 100 ns units, relative */
+            SetWaitableTimer(t, &due, 0, NULL, NULL, 0);
+            WaitForSingleObject(t, 0xFFFFFFFF);
+        }
         g_vblank_data[0]++;
         g_vblank_data[1] = g_frames;
         for (int i = 0; i < 2; i++)

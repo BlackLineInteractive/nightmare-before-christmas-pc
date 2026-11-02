@@ -14,7 +14,7 @@ Field layout follows the public D3DPIXELSHADERDEF / NV097 combiner register
 descriptions (XDK d3d8types.h, xemu psh.c).
 
 Not covered yet: fog (FOG is (0, 0, 0, 1), i.e. no fog), texture modes other
-than 2D (all the game's shaders use PROJECT2D), per-draw SetPixelShaderConstant.
+than 2D (linear textures: texel coordinates, scaled by c0..c3) (all the game's shaders use PROJECT2D), per-draw SetPixelShaderConstant.
 
 usage: nv2a_psh.py [default.xbe]   (prints the decoded shaders and HLSL)
 """
@@ -66,7 +66,7 @@ def src(byte, rgb, consts):
     return MAPPING[mapping].format(x=x)
 
 
-def stage(d, i, consts):
+def stage(d, i, consts, msb):
     """HLSL for general combiner stage i (RGB and alpha read the same inputs, then write)"""
     lines, writes = [], []
     for rgb in (True, False):
@@ -81,7 +81,9 @@ def stage(d, i, consts):
         lines.append(f"  {t} {p}ab = clamp({op.format(x=f'({ab})')}, -1, 1);")
         lines.append(f"  {t} {p}cd = clamp({op.format(x=f'({cd})')}, -1, 1);")
         if out & (1 << 14):
-            s = f"((R0.a >= 0.5) ? {p}cd : {p}ab)"
+            # mux: R0.a's most significant bit, or its lowest bit (as 8-bit fixed point)
+            sel = "R0.a >= 0.5" if msb else "fmod(round(saturate(R0.a) * 255), 2) >= 1"
+            s = f"(({sel}) ? {p}cd : {p}ab)"
         else:
             s = f"({p}ab + {p}cd)"
         lines.append(f"  {t} {p}sum = clamp({s}, -1, 1);")
@@ -99,24 +101,27 @@ def stage(d, i, consts):
 
 def hlsl(d):
     count = u(d, COUNT)
-    n, unique_c0, unique_c1 = count & 255, count & 0x10000, count & 0x1000000
+    # PS_COMBINERCOUNT: stages in bits 0..7, MUX_MSB 0x100, UNIQUE_C0 0x1000, UNIQUE_C1 0x10000
+    n, msb, unique_c0, unique_c1 = count & 255, count & 0x100, count & 0x1000, count & 0x10000
     modes = u(d, TEX_MODES)
     s = "sampler2D s0 : register(s0);\nsampler2D s1 : register(s1);\n"
     s += "sampler2D s2 : register(s2);\nsampler2D s3 : register(s3);\n"
     s += ("struct PSIN { float4 d0 : COLOR0; float4 d1 : COLOR1; float4 t0 : TEXCOORD0; "
           "float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; };\n")
+    # Xbox linear textures take texel coordinates; the renderer sets 1 / size for them, 1 otherwise
+    s += "float4 tscale[4] : register(c0);\n"
     s += "float4 main(PSIN i) : COLOR0\n{\n"
     s += "  float4 ZERO = 0, FOG = float4(0, 0, 0, 1);\n"
     s += "  float4 V0 = i.d0, V1 = i.d1;\n"
     for t in range(4):
         mode = (modes >> (5 * t)) & 31
-        s += f"  float4 T{t} = {f'tex2D(s{t}, i.t{t}.xy)' if mode else '0'};\n"
+        s += f"  float4 T{t} = {f'tex2D(s{t}, i.t{t}.xy * tscale[{t}].xy)' if mode else '0'};\n"
     s += "  float4 R0 = float4(0, 0, 0, T0.a), R1 = 0;\n"
     for i in range(min(n, 8)):
         c0 = u(d, CONST0 + 4 * (i if unique_c0 else 0))
         c1 = u(d, CONST1 + 4 * (i if unique_c1 else 0))
         s += f"  float4 C0_{i} = {color(c0)}, C1_{i} = {color(c1)};\n"
-        s += '\n'.join(stage(d, i, {1: f'C0_{i}', 2: f'C1_{i}'})) + '\n'
+        s += '\n'.join(stage(d, i, {1: f'C0_{i}', 2: f'C1_{i}'}, msb)) + '\n'
     # final combiner: rgb = A*B + (1-A)*C + D, alpha = G; EF = E*F, V1R0 = V1 + R0
     abcd, efg = u(d, FINAL_ABCD), u(d, FINAL_EFG)
     fc = {1: 'FC0', 2: 'FC1'}
