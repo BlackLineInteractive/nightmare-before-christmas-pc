@@ -72,6 +72,7 @@ static void   tex_invalidate(const void* res);
 static void   default_xbox_state(void);
 static void   maybe_screenshot(void);
 static int    fmt_linear(u32 f);
+static void   batch_flush(void);
 static XRes   g_backbuffer, g_depth;
 static XRes*  g_textures[4];
 static float  g_transforms[16][16];
@@ -161,6 +162,7 @@ HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, floa
 {
     g_stat_clear++;
     if (!g_dev) return 0;
+    batch_flush();
     if (g_rt_offscreen) { g_stat_rt_skipped++; return 0; }
     u32 f = 0;
     /* Xbox clears the colour channels one by one (R 0x10, G 0x20, B 0x40, A 0x80).
@@ -181,6 +183,7 @@ HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, floa
 u32 WINAPI pc_Swap(u32 flags)
 {
     if (g_dev) {
+        batch_flush();
         maybe_screenshot();
         u32 t = ticks();
         VCALL(g_dev, DEV_EndScene, PFN_Scene)(g_dev);
@@ -298,7 +301,7 @@ void WINAPI pc_ResourceBlockUntilNotBusy(XRes* r) { }
 XRes* WINAPI pc_GetBackBuffer2(s32 index) { return &g_backbuffer; }
 XRes* WINAPI pc_GetRenderTarget2(void) { return &g_backbuffer; }
 XRes* WINAPI pc_GetDepthStencilSurface2(void) { return &g_depth; }
-HRESULT WINAPI pc_SetRenderTarget(XRes* rt, XRes* zs) { if (rt) g_rt_offscreen = rt != &g_backbuffer; return 0; }
+HRESULT WINAPI pc_SetRenderTarget(XRes* rt, XRes* zs) { batch_flush(); if (rt) g_rt_offscreen = rt != &g_backbuffer; return 0; }
 HRESULT WINAPI pc_CopyRects(XRes* src, const void* srcRects, u32 n, XRes* dst, const void* pts) { return 0; }
 
 /* SetTexture(Stage, pTexture) */

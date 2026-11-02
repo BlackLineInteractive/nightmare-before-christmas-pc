@@ -615,26 +615,94 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     log_str(b);
 }
 
-/* Draws that are left out for now:
- * - stencil shadows (volumes and shading; the shading pass does not work
- *   yet), ~60% of a level's draws, unless env PC_SHADOWS=1;
+/* Draws that are left out:
+ * - stencil shadows when env PC_SHADOWS=0;
  * - draws into an off-screen render target (render-to-texture is not done
  *   yet; they would land on the back buffer). */
 static int skip_shadow_pass(void)
 {
     static int shadows = -1;
-    if (shadows < 0) { char b[4]; shadows = GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 && b[0] == '1'; }
+    if (shadows < 0) { char b[4]; shadows = !(GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 && b[0] == '0'); }
     if (g_rt_offscreen) { g_stat_rt_skipped++; return 1; }
     return !shadows && XRS(XRS_STENCILENABLE);
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
+/* Batching of small *UP draws. The stencil shadows are ~1700 four-vertex
+ * triangle strips (Xbox prim 6) a frame, each with the same state as the one
+ * before. Such strips are appended to the ring in quad order (0, 1, 3, 2) and
+ * drawn together as g_quad_ib quads when the state changes or anything else
+ * is drawn, cleared or presented. The state is compared through a checksum of everything a draw
+ * applies: render / texture-stage state, vertex constants, shaders, textures. */
+static u32 g_batch_sig, g_batch_start, g_batch_verts, g_batch_stride;
+
+static u32 state_sig(void)
+{
+    u32 s = 2166136261u;
+    for (u32 i = 0; i < 160; i++) s = (s ^ XRS(i)) * 16777619u;
+    for (u32 i = 0; i < 4 * 32; i++) s = (s ^ XTS(i / 32, i % 32)) * 16777619u;
+    const u32* c = (const u32*)0x001e1c70;
+    for (u32 i = 0; i < 192 * 4; i++) s = (s ^ c[i]) * 16777619u;
+    s = (s ^ g_vshader) * 16777619u; s = (s ^ g_pshader) * 16777619u;
+    for (u32 i = 0; i < 4; i++) s = (s ^ (u32)g_textures[i]) * 16777619u;
+    return s;
+}
+
+static void batch_flush(void)
+{
+    if (!g_batch_verts) return;
+    draw9(8, g_batch_start, g_batch_verts);
+    g_batch_verts = 0;
+}
+
+/* strip of 4 -> quad: vertices 0, 1, 3, 2 */
+static void copy_strip_as_quad(u8* dst, const u8* src, u32 stride)
+{
+    memcpy(dst, src, stride * 2);
+    memcpy(dst + stride * 2, src + stride * 3, stride);
+    memcpy(dst + stride * 3, src + stride * 2, stride);
+}
+
+/* 1 if the strip was added to the batch (or started one) */
+static int batch_strip(const void* data, u32 stride)
+{
+    u32 sig = state_sig(), bytes = 4 * stride;
+    if (g_batch_verts && sig == g_batch_sig && stride == g_batch_stride && g_batch_verts < MAX_QUADS * 4 &&
+        g_ring_pos == (g_batch_start + g_batch_verts) * stride && g_ring_pos + bytes <= RING_SIZE) {
+        u8* dst;
+        if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, g_ring_pos, bytes, (void**)&dst, 0x1000) < 0) return 0;
+        copy_strip_as_quad(dst, data, stride);
+        VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
+        g_ring_pos += bytes; g_vb_bytes += bytes; g_batch_verts += 4;
+        return 1;
+    }
+    batch_flush();
+    if (!bind_vshader()) { g_stat_skipped++; return 1; }
+    apply_state();
+    if (!ring_init()) return 1;
+    u32 pos = (g_ring_pos + stride - 1) / stride * stride, flags = 0x1000;
+    if (pos + bytes > RING_SIZE) { pos = 0; flags = 0x2000; }
+    u8* dst;
+    if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, pos, bytes, (void**)&dst, flags) < 0) return 1;
+    copy_strip_as_quad(dst, data, stride);
+    VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
+    g_ring_pos = pos + bytes; g_vb_bytes += bytes;
+    if (g_ring_stride0 != stride) {
+        VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, 0, g_ring, 0, stride);
+        g_ring_stride0 = stride; g_stream9[0] = NULL;
+    }
+    g_batch_sig = sig; g_batch_stride = stride; g_batch_start = pos / stride; g_batch_verts = 4;
+    return 1;
+}
+
 void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
     trace_draw("[tr] UP", prim, count, data, stride);
     if (!g_dev || !data || !count || skip_shadow_pass()) return;
     u32 t0 = ticks();
+    if (prim == 6 && count == 4 && batch_strip(data, stride)) { g_us_draw += us_since(t0); return; }
+    batch_flush();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
     draw_one_stream(prim, data, count, stride);
@@ -649,6 +717,7 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
                g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
     if (!g_dev || !count || skip_shadow_pass()) return;
     u32 t0 = ticks();
+    batch_flush();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
     draw_streams(prim, start, count);

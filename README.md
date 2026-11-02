@@ -1,4 +1,4 @@
-# *The Nightmare Before Christmas: Oogie's Revenge* — Native PC Port
+# *The Nightmare Before Christmas: Oogie's Revenge* - Native PC Port
 
 ### Native PC Reimplementation Engine & C++17 Reverse-Engineering Toolkit
 
@@ -92,7 +92,31 @@ cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 ## Native PC Executable (Binary Port of `default.xbe`)
 
-Goal: run the **original game code** on PC by patching the executable itself — no emulator, no HLE layer, no recompilation. Game logic stays byte-for-byte original, the game reads its original files through its original file system, and the Xbox-only libraries (graphics, sound, input) are replaced with our own.
+Goal: run the **original game code** on PC by patching the executable itself - no emulator, no HLE layer, no recompilation. Game logic stays byte-for-byte original, the game reads its original files through its original file system, and the Xbox-only libraries (graphics, sound, input) are replaced with our own.
+
+### Architecture & How It Works (Step-by-Step)
+
+```text
+[ Original default.xbe (Xbox) ]
+                 │
+                 ▼ (tools/build_flat_pe.py)
+[ Flat Windows PE: default_pc.exe ]
+  ├── 1. Memory mapped at base 0x00010000 (1:1 with Xbox layout)
+  │      ↳ All absolute pointers, jump tables, Capcom globals stay valid
+  │
+  ├── 2. Hardware patches (NV2A MMIO neutralized)
+  │      ↳ D3D_WaitGPUReady spin-waits & NV2A register polling patched to NOPs
+  │
+  ├── 3. XAPI / Kernel thunking -> Win32 (tools/xapi_port.py)
+  │      ↳ Xbox APIs jump directly to kernel32.dll / ntdll.dll twins
+  │      ↳ Drive paths (D:\, U:\) mapped to game directories
+  │
+  └── 4. Native PC backend (src/PC/)
+         ├── D3D8 (Xbox) ──────► Direct3D 9 (render.c, draw.c)
+         ├── NV2A Shaders ─────► HLSL (nv2a_vsh.py)
+         ├── XPP Gamepad ──────► XInput + Keyboard (input.c)
+         └── XACT Sound ───────► DirectSound stubs (audio.c)
+```
 
 ### Generate the flat PE
 
