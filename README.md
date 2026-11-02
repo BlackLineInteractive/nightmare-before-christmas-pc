@@ -236,13 +236,12 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
 
 ---
 
-## ❤️ Support & Sponsor
+## Support & Sponsor
 
 If you enjoy this project and want to support its active development, reverse-engineering research, and hardware testing, consider supporting us:
 
 - **Ko-fi:** [ko-fi.com/blacklineinteractive](https://ko-fi.com/blacklineinteractive)
 - **Patreon:** [patreon.com/BlacklineInteractive](https://www.patreon.com/BlacklineInteractive)
-- **YouTube:** [youtube.com/@blacklineinteractive](https://youtube.com/@blacklineinteractive)
 
 Every bit of support helps keep the project moving forward towards a fully playable PC release!
 
