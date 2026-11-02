@@ -242,6 +242,7 @@ If you enjoy this project and want to support its active development, reverse-en
 
 - **Ko-fi:** [ko-fi.com/blacklineinteractive](https://ko-fi.com/blacklineinteractive)
 - **Patreon:** [patreon.com/BlacklineInteractive](https://www.patreon.com/BlacklineInteractive)
+- **YouTube:** [youtube.com/@blacklineinteractive](https://youtube.com/@blacklineinteractive)
 
 Every bit of support helps keep the project moving forward towards a fully playable PC release!
 
