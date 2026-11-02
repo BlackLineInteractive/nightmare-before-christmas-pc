@@ -67,6 +67,62 @@ u32 WINAPI pc_XInputGetCapabilities(HANDLE h, u8* caps)
 static short axis(int neg, int pos) { return (short)(pos ? 32767 : 0) - (short)(neg ? 32767 : 0); }
 static u8 analog(int down) { return down ? 255 : 0; }
 
+/* Scripted input for testing, env PC_KEYS="<frame>:<buttons>,...": from that
+ * frame the buttons are held for 8 frames. Buttons: S start, K back, A B X Y,
+ * U D L R (d-pad), P = take a screenshot then. e.g. PC_KEYS=2400:S,2600:A */
+static struct { u32 frame; char b[6]; } g_keys[64];
+static u32 g_nkeys = 0xFFFFFFFF;
+
+static void scripted_load(void)
+{
+    if (g_nkeys == 0xFFFFFFFF) {
+        static char e[512];
+        u32 n = GetEnvironmentVariableA("PC_KEYS", e, sizeof e - 1), i = 0;
+        g_nkeys = 0;
+        while (i < n && g_nkeys < 64) {
+            u32 f = 0, k = 0;
+            while (i < n && e[i] >= '0' && e[i] <= '9') f = f * 10 + (e[i++] - '0');
+            if (i < n && e[i] == ':') i++;
+            while (i < n && e[i] != ',' && k < 5) g_keys[g_nkeys].b[k++] = e[i++];
+            while (i < n && e[i] != ',') i++;
+            i++;
+            g_keys[g_nkeys++].frame = f;
+        }
+        if (g_nkeys) log_hex("[pc] PC_KEYS entries", g_nkeys);
+    }
+}
+
+/* P entries: called from Swap, so they also fire while the game reads no input */
+static void scripted_shots(void)
+{
+    scripted_load();
+    for (u32 i = 0; i < g_nkeys; i++)
+        if (g_frames == g_keys[i].frame)
+            for (const char* c = g_keys[i].b; *c; c++)
+                if (*c == 'P') save_screenshot();
+}
+
+static void scripted(XBOX_GAMEPAD* g)
+{
+    scripted_load();
+    for (u32 i = 0; i < g_nkeys; i++) {
+        if (g_frames < g_keys[i].frame || g_frames >= g_keys[i].frame + 8) continue;
+        for (const char* c = g_keys[i].b; *c; c++)
+            switch (*c) {
+            case 'S': g->wButtons |= 0x10; break;
+            case 'K': g->wButtons |= 0x20; break;
+            case 'U': g->wButtons |= 0x01; break;
+            case 'D': g->wButtons |= 0x02; break;
+            case 'L': g->wButtons |= 0x04; break;
+            case 'R': g->wButtons |= 0x08; break;
+            case 'A': g->bAnalogButtons[0] = 255; break;
+            case 'B': g->bAnalogButtons[1] = 255; break;
+            case 'X': g->bAnalogButtons[2] = 255; break;
+            case 'Y': g->bAnalogButtons[3] = 255; break;
+            }
+    }
+}
+
 /* XInputGetState(hDevice, pState) */
 u32 WINAPI pc_XInputGetState(HANDLE h, XBOX_INPUT_STATE* st)
 {
@@ -109,6 +165,7 @@ u32 WINAPI pc_XInputGetState(HANDLE h, XBOX_INPUT_STATE* st)
     if (key('J') || key('L')) g->sThumbRX = axis(key('J'), key('L'));
     if (key('I') || key('K')) g->sThumbRY = axis(key('K'), key('I'));
 
+    scripted(g);
     st->dwPacketNumber = ++g_packet;
     return 0;
 }

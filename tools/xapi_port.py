@@ -32,7 +32,7 @@ XAPI_TO_WIN32 = {
     0x1bd383: 'GetFileSizeEx',
     0x1bd3c1: 'ReadFileEx',
     0x1bd412: 'GetFileSize',
-    0x1bd44d: 'CreateFileA',
+    # 0x1bd44d CreateFileA: src/PC/rt.c (logs files that do not open), see pc_render.MEM_TO_PC
     0x1bd5d8: 'CreateEventA',
     0x1bd639: 'SetEvent',
     0x1bd659: 'CreateSemaphoreA',

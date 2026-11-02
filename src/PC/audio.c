@@ -48,6 +48,9 @@ static u32 g_audio_cs[8]; /* CRITICAL_SECTION: game threads vs. mixer */
 static void lock(void) { EnterCriticalSection(g_audio_cs); }
 static void unlock(void) { LeaveCriticalSection(g_audio_cs); }
 
+/* PC_AUDIOLOG=1: log every cue, stop and notification (slow: the console is) */
+static int g_audio_log;
+
 static u32 g_rand = 12345;
 static u32 rnd(void) {
   g_rand = g_rand * 1103515245u + 12345u;
@@ -202,7 +205,7 @@ typedef struct {
   u8 *stream;
   u32 s_off, s_len; /* streamed banks: raw bytes at s_off */
 } Voice;
-#define VOICE_MAX 48
+#define VOICE_MAX 96
 static Voice g_voice[VOICE_MAX];
 
 typedef struct {
@@ -221,11 +224,12 @@ typedef struct Cue {
   u32 t;   /* samples played (48 kHz) */
   s32 delay; /* samples to wait before starting (lines sound up with the picture) */
   int ended; /* its CUESTOP notification went out */
+  s32 fade;  /* > 0: fading out after Stop, samples left */
   s32 vol; /* the sound's volume */
   Track tr[4];
   u32 ntr;
 } Cue;
-#define CUE_MAX 96
+#define CUE_MAX 192
 static Cue g_cue[CUE_MAX];
 
 static const s16 g_step[89] = {
@@ -333,8 +337,15 @@ static void voice_start(Track *t, Cue *c, u32 wave, u32 bank, u32 loops) {
   if (bank >= c->sb->wavebanks)
     return;
   WaveBank *wb = wb_find(sb_wb_name(c->sb, bank));
-  if (!wb || wave >= wb->count)
+  if (!wb || wave >= wb->count) {
+    static u32 logged;
+    if (logged++ < 20) {
+      log_str("[pc] audio: no wave bank / wave for ");
+      log_str(sb_wb_name(c->sb, bank));
+      log_hex(" wave", wave);
+    }
     return;
+  }
   if (t->v && t->v->cue == c)
     voice_stop(t->v);
   Voice *v = NULL;
@@ -367,6 +378,10 @@ static void voice_start(Track *t, Cue *c, u32 wave, u32 bank, u32 loops) {
   v->active = 1;
 }
 
+/* the value variation tables are looked up with: music and demo cues have
+ * one layer per value; the game never changes it from 0 */
+static u32 g_variation;
+
 static void cue_event_loop(Cue *c) {
   for (u32 i = 0; i < c->ntr; i++) {
     Track *t = &c->tr[i];
@@ -396,11 +411,13 @@ static void cue_event_loop(Cue *c) {
       case 0x0C:
         size = 8;
         break;
-      case 0x10: { /* play one of several waves */
-        u32 n = (*(const u32 *)(t->ev + 4) - 8) / 4;
-        const u8 *e = t->ev + 16 + 4 * (n ? rnd() % n : 0);
-        if (n)
-          voice_start(t, c, *(const u16 *)e, e[2], 0);
+      case 0x10: { /* volume by variation: entries WORD value, BYTE, BYTE dB;
+                      0xE7 (-25) mutes the track for that value */
+        u32 n = *(const u32 *)(t->ev + 4) / 4;
+        const u8 *e = t->ev + 8;
+        for (u32 j = 0; j < n; j++)
+          if (*(const u16 *)(e + 4 * j) == g_variation)
+            t->vol = (s8)e[4 * j + 3] <= -25 ? -10000 : (s8)e[4 * j + 3] * 100;
         size = 8 + *(const u32 *)(t->ev + 4);
         break;
       }
@@ -423,20 +440,27 @@ static void cue_event_loop(Cue *c) {
  * +12 pSoundCue; a notification carries the same fields. */
 #define XACTNOTIFICATIONTYPE_SOUNDCUESTOP 1
 typedef struct { u16 type, flags; void *sb; u32 index; void *cue; } Note;
-static Note g_reg[32], g_note[64];
+static Note g_reg[128], g_note[64];
 static u32 g_note_head, g_note_tail;
 
 static void cue_notify_stop(Cue *c) {
   if (c->ended)
     return;
   c->ended = 1;
-  for (int i = 0; i < 32; i++) {
+  for (int i = 0; i < 128; i++) {
     Note *r = &g_reg[i];
     if (r->type != XACTNOTIFICATIONTYPE_SOUNDCUESTOP)
       continue;
     if (r->cue ? r->cue != c : (r->sb != c->sb || (r->index != 0xFFFFFFFF && r->index != c->index)))
       continue;
     Note n = { XACTNOTIFICATIONTYPE_SOUNDCUESTOP, 0, c->sb, c->index, c };
+    if (r->cue)
+      r->type = 0; /* registered for this cue instance only: done */
+    if (g_audio_log) {
+    log_str("[pc] audio: cue stopped, notified: ");
+    log_str((const char *)c->sb->data + *(const u32 *)(sb_cue(c->sb, c->index) + 4));
+    log_hex(" after ms", c->t / 48);
+    }
     g_note[g_note_tail++ & 63] = n;
   }
 }
@@ -449,7 +473,18 @@ static void cue_stop(Cue *c) {
   c->magic = 0;
 }
 
+/* Stop: a short fade (a hard cut clicks and chops music off), then the stop */
+#define FADE_SAMPLES (48000 / 4)
+static void cue_fade(Cue *c) {
+  if (c->paused || c->delay > 0 || c->ended)
+    cue_stop(c);                         /* nothing audible: stop at once */
+  else if (!c->fade)
+    c->fade = FADE_SAMPLES;
+}
+
 static int cue_alive(Cue *c) {
+  if (c->paused == 2)
+    return 1;
   for (u32 i = 0; i < c->ntr; i++)
     if (c->tr[i].left ||
         (c->tr[i].v && c->tr[i].v->cue == c && c->tr[i].v->active))
@@ -464,7 +499,7 @@ static s32 g_delay = 100 * 48;
 
 static u32 g_cue_log;
 static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
-  if (sb && index < sb->cues && g_cue_log < 200) {
+  if (g_audio_log && sb && index < sb->cues && g_cue_log < 5000) {
     g_cue_log++;
     log_str("[pc] audio: cue ");
     log_str((const char *)sb->data + *(const u32 *)(sb_cue(sb, index) + 4));
@@ -490,6 +525,7 @@ static Cue *cue_play(SoundBank *sb, u32 index, Source *src) {
   }
   memset(c, 0, sizeof *c);
   c->magic = 0x20455543;
+  c->fade = 0;
   c->ended = 0;
   c->delay = g_delay;
   c->sb = sb;
@@ -589,6 +625,11 @@ static void mix(s16 *out) {
         g_cue[i].delay -= MIX_FRAMES;
         continue;
       }
+      if (g_cue[i].fade > 0 && (g_cue[i].fade -= MIX_FRAMES) <= 0) {
+        g_cue[i].fade = 0;
+        cue_stop(&g_cue[i]);
+        continue;
+      }
       g_cue[i].t += MIX_FRAMES;
       cue_event_loop(&g_cue[i]);
     }
@@ -613,6 +654,8 @@ static void mix(s16 *out) {
     s32 cb = (c ? c->vol : 0) + (t ? t->vol : 0) +
              (c && c->src ? c->src->volume : 0);
     float g = db100_gain(cb) * g_master * (1.0f / 32768.0f);
+    if (c && c->fade > 0)
+      g *= (float)c->fade / (float)FADE_SAMPLES;
     float *a = g_acc;
     for (u32 n = 0; n < MIX_FRAMES; n++) {
       while (v->frac >= 1.0f) {
@@ -696,6 +739,7 @@ static void audio_init(void) {
   done = 1;
   InitializeCriticalSection(g_audio_cs);
   char b[4];
+  g_audio_log = GetEnvironmentVariableA("PC_AUDIOLOG", b, 4) > 0;
   if (GetEnvironmentVariableA("PC_NOSOUND", b, 4) > 0)
     return;
   char d[8];
@@ -794,7 +838,7 @@ HRESULT WINAPI pc_XACT_RegisterWaveBank(void *e, const u8 *data, u32 size,
  * params +0 file handle, +4 offset of the bank in the file */
 HRESULT WINAPI pc_XACT_RegisterStreamedWaveBank(void *e, const u32 *params,
                                                 void **pp) {
-  static u8 hdr[0x2000];
+  static u8 hdr[0x8000]; /* header + entry table (VOICE: 379 x 24 bytes) */
   lock();
   WaveBank *w = wb_alloc();
   if (w) {
@@ -803,8 +847,10 @@ HRESULT WINAPI pc_XACT_RegisterStreamedWaveBank(void *e, const u32 *params,
     if (wb_parse(w, hdr, n)) {
       w->file = (HANDLE)params[0];
       w->file_base = params[1];
-    } else
+    } else {
+      log_str("[pc] audio: streamed wave bank not understood\n");
       w = NULL;
+    }
   }
   *pp = prepared(w);
   unlock();
@@ -862,18 +908,25 @@ HRESULT WINAPI pc_XACT_RegisterNotification(void *e, const Note *d) {
   if (!d)
     return S_OK;
   lock();
-  for (int i = 0; i < 32; i++)
-    if (!g_reg[i].type) {
-      g_reg[i] = *d;
-      break;
-    }
+  int k = -1;
+  for (int i = 0; i < 128; i++) {
+    Cue *c = g_reg[i].cue;
+    if (g_reg[i].type && c && (c->ended || !c->magic)) /* stale: its cue is gone */
+      g_reg[i].type = 0;
+    if (!g_reg[i].type && k < 0)
+      k = i;
+  }
+  if (k >= 0)
+    g_reg[k] = *d;
+  else
+    log_str("[pc] audio: notification table full\n");
   unlock();
   return S_OK;
 }
 /* IXACTEngine_UnRegisterNotification(pEngine, pDesc) */
 HRESULT WINAPI pc_XACT_UnRegisterNotification(void *e, const Note *d) {
   lock();
-  for (int i = 0; i < 32; i++)
+  for (int i = 0; i < 128; i++)
     if (!d || (g_reg[i].type == d->type && g_reg[i].sb == d->sb && g_reg[i].cue == d->cue))
       g_reg[i].type = 0;
   unlock();
@@ -894,6 +947,28 @@ HRESULT WINAPI pc_XACT_Out2(void *e, u32 *out) {
   if (out)
     *out = 0;
   return S_OK;
+}
+
+static const char *cue_name(Cue *c) {
+  return c && c->sb && c->sb->magic ? (const char *)c->sb->data + *(const u32 *)(sb_cue(c->sb, c->index) + 4) : "?";
+}
+static void call_log(const char *what, void *obj, u32 a, u32 b) {
+  static u32 n;
+  if (!g_audio_log || n++ > 3000)
+    return;
+  char t[96];
+  int i = 0;
+  while (*what)
+    t[i++] = *what++;
+  u32 v[3] = {(u32)obj, a, b};
+  for (int k = 0; k < 3; k++) {
+    t[i++] = ' ';
+    for (int j = 28; j >= 0; j -= 4)
+      t[i++] = "0123456789abcdef"[(v[k] >> j) & 15];
+  }
+  t[i++] = '\n';
+  t[i] = 0;
+  log_str(t);
 }
 
 static SoundBank *as_sb(void *p) {
@@ -931,38 +1006,55 @@ HRESULT WINAPI pc_XACT_GetCueIndex(void *p, const char *name, u32 *index) {
 
 /* IXACTSoundBank_Play / PlayEx(pSoundBank, pParams, ppSoundCue):
  * params +0 flags, +4 cue index, +8 sound source */
+/* params +0 flags (8 = prepare only, 4 = play the cue prepared in *ppCue),
+ * +4 cue index, +8 sound source. The game prepares every cue with one call
+ * and starts it with a second. */
+#define XACT_PLAY_START_PREPARED 4
+#define XACT_PLAY_PREPARE 8
 static HRESULT play(void *p, const u32 *params, void **out) {
   lock();
-  Cue *c = cue_play(as_sb(p), params[1], as_src((void *)params[2]));
+  Cue *c = NULL;
+  if ((params[0] & XACT_PLAY_START_PREPARED) && out && (c = as_cue(*out)) && c->paused == 2) {
+    c->paused = 0;                                   /* start the prepared cue */
+  } else {
+    c = cue_play(as_sb(p), params[1], as_src((void *)params[2]));
+    if (c && (params[0] & XACT_PLAY_PREPARE))
+      c->paused = 2;                                 /* prepared: silent until started */
+  }
   unlock();
   if (out)
     *out = c;
   return c ? S_OK : E_FAIL;
 }
 HRESULT WINAPI pc_XACT_SB_Play(void *p, const u32 *params, void **out) {
+  call_log("[pc] audio: SB_e00 flags/index/out", (void *)params[0], params[1], (u32)out);
   return play(p, params, out);
 }
 HRESULT WINAPI pc_XACT_SB_PlayEx(void *p, const u32 *params, void **out) {
+  call_log("[pc] audio: SB_e33 flags/index/out", (void *)params[0], params[1], (u32)out);
   return play(p, params, out);
 }
 
 /* IXACTSoundBank_Stop(pSoundBank, dwCueIndex, dwFlags, pSoundCue): one
  * cue, or every playing instance of a cue index when pSoundCue is NULL */
 HRESULT WINAPI pc_XACT_SB_Stop(void *p, u32 index, u32 flags, void *cue) {
+  call_log("[pc] audio: Stop", cue, index, flags);
+  if (g_audio_log && as_cue(cue)) { log_str("[pc] audio:   = "); log_str(cue_name(as_cue(cue))); log_str("\n"); }
   lock();
   Cue *c = as_cue(cue);
   if (c)
-    cue_stop(c);
+    cue_fade(c);
   else if (index != 0xFFFFFFFF)
     for (int i = 0; i < CUE_MAX; i++)
       if (g_cue[i].magic && g_cue[i].sb == p && g_cue[i].index == index)
-        cue_stop(&g_cue[i]);
+        cue_fade(&g_cue[i]);
   unlock();
   return S_OK;
 }
 
 /* IXACTSoundBank pause (pSoundBank, pSoundCue, bPause) */
 HRESULT WINAPI pc_XACT_SB_Pause(void *p, void *cue, u32 pause) {
+  call_log("[pc] audio: Pause", cue, pause, 0);
   lock();
   Cue *c = as_cue(cue);
   if (c)
@@ -973,6 +1065,7 @@ HRESULT WINAPI pc_XACT_SB_Pause(void *p, void *cue, u32 pause) {
 
 /* Release of a sound bank stops its cues */
 HRESULT WINAPI pc_XACT_Release(void *p) {
+  call_log("[pc] audio: Release", p, as_cue(p) ? 1 : 0, as_sb(p) ? 1 : 0);
   lock();
   SoundBank *s = as_sb(p);
   if (s) {
@@ -991,14 +1084,15 @@ HRESULT WINAPI pc_XACT_Src_SetPosition(void *s, float x, float y, float z,
                                        u32 apply) {
   return S_OK;
 }
-HRESULT WINAPI pc_XACT_Src_2a(void *s, u32 a) { return S_OK; }
+HRESULT WINAPI pc_XACT_Src_2a(void *s, u32 a) { call_log("[pc] audio: Src_2a", s, a, 0); return S_OK; }
 HRESULT WINAPI pc_XACT_Src_SetVolume(void *p, s32 v) {
+  call_log("[pc] audio: Src_SetVolume", p, (u32)v, 0);
   Source *s = as_src(p);
   if (s && v <= 0 && v >= -10000)
     s->volume = v;
   return S_OK;
 }
-HRESULT WINAPI pc_XACT_Src_1(void *s) { return S_OK; }
+HRESULT WINAPI pc_XACT_Src_1(void *s) { call_log("[pc] audio: Src_1", s, 0, 0); return S_OK; }
 /* GetStatus: 1 while a voice of this source plays */
 HRESULT WINAPI pc_XACT_Src_GetStatus(void *p, u32 *out) {
   u32 st = 0;
@@ -1015,7 +1109,7 @@ HRESULT WINAPI pc_XACT_Src_GetStatus(void *p, u32 *out) {
 /* calls with nothing to hand back, by argument count */
 HRESULT WINAPI pc_XACT_Nop1(void *a) { return S_OK; }
 HRESULT WINAPI pc_XACT_Nop2(void *a, void *b) { return S_OK; }
-HRESULT WINAPI pc_XACT_Nop3(void *a, void *b, void *c) { return S_OK; }
+HRESULT WINAPI pc_XACT_Nop3(void *a, void *b, void *c) { call_log("[pc] audio: Nop3", a, (u32)b, (u32)c); return S_OK; }
 
 /* DirectSound (the parts Bink uses) */
 static u32 g_dsound[16];

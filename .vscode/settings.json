@@ -1,3 +1,8 @@
 {
-  "git.detectSubmodules": false
+  "git.detectSubmodules": false,
+  "git.detectSubmodulesLimit": 0,
+  "git.ignoredRepositories": [
+    "external/imgui",
+    "external/rlImGui"
+  ]
 }

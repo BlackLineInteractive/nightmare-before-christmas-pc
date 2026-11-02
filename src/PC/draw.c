@@ -595,8 +595,9 @@ static void draw_streams(u32 prim, u32 start, u32 count)
     draw9(prim, 0, count);
 }
 
-/* Draw trace: env PC_TRACE=<frame>, the key T for the next frame, and once by
- * itself 300 frames after the first vertex-buffer draw (the 3D world). One line per
+/* Draw trace, only with env PC_TRACE set: PC_TRACE=<frame>, the key T for the
+ * next frame, PC_TRACE=auto 300 frames after the first vertex-buffer draw (the
+ * 3D world). Off by default: each trace writes ~30 screenshots. One line per
  * draw: kind, prim, count, stride, vertex shader / FVF, texture 0 format,
  * Z enable / func, cull, blend src / dst, stream 0 Data, first vertex. */
 static char* hx(char* p, u32 v) { *p++ = ' '; for (int k = 7; k >= 0; k--) *p++ = "0123456789abcdef"[(v >> (k * 4)) & 15]; return p; }
@@ -606,12 +607,14 @@ static void save_screenshot(void);
 
 static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32 stride)
 {
-    static u32 at = 0xFFFFFFFF, key_was;
+    static u32 at = 0xFFFFFFFF, key_was, enabled;
     if (at == 0xFFFFFFFF) {
         char b[16]; u32 n = GetEnvironmentVariableA("PC_TRACE", b, sizeof b);
-        at = 0;
+        at = 0; enabled = n > 0;
+        if (n == 0 || b[0] != 'a') g_trace_auto = 1;           /* auto only with PC_TRACE=auto */
         for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
     }
+    if (!enabled) return;
     u32 key = (GetAsyncKeyState('T') & 0x8000) != 0;
     if (key && !key_was) { at = g_frames + 1; log_hex("[pc] trace at frame", at); }
     key_was = key;
@@ -758,7 +761,7 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
     trace_draw("[tr] UP", prim, count, data, stride);
-    if (!g_dev || !data || !count || skip_shadow_pass()) return;
+    if (!g_dev || !data || !count || g_skip_render || skip_shadow_pass()) return;
     if (prim == 6 && count == 4 && batch_strip(data, stride)) return;
     u32 t0 = ticks();
     batch_flush();
@@ -774,7 +777,7 @@ void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
     g_stat_draw++;
     trace_draw("[tr] VB", prim, count,
                g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
-    if (!g_dev || !count || skip_shadow_pass()) return;
+    if (!g_dev || !count || g_skip_render || skip_shadow_pass()) return;
     u32 t0 = ticks();
     batch_flush();
     if (!bind_vshader()) { g_stat_skipped++; return; }

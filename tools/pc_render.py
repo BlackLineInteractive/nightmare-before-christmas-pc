@@ -101,6 +101,7 @@ MEM_TO_PC = {
     0x1bdcc7: ('_pc_XPhysicalFree@4', 'XPhysicalFree'),
     0x1bfe94: ('_pc_XMemAlloc@8', 'XMemAlloc'),
     0x1bff34: ('_pc_XMemFree@8', 'XMemFree'),
+    0x1bd44d: ('_pc_CreateFileA@28', 'CreateFileA (XAPI), logged when it fails'),
 }
 
 # XACT / DirectSound -> src/PC/audio.c

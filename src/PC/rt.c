@@ -116,3 +116,13 @@ static void start_watchdog(void)
     g_main_thread = OpenThread(0x1FFFFF, 0, GetCurrentThreadId());
     CreateThread(NULL, 0, watchdog, NULL, 0, NULL);
 }
+
+/* XAPI CreateFileA: kernel32's, with every file that fails to open logged
+ * (missing game data shows up as a skipped scene, not as an error) */
+IMPORT HANDLE WINAPI CreateFileA(const char* name, u32 access, u32 share, void* sa, u32 disp, u32 flags, HANDLE tmpl);
+HANDLE WINAPI pc_CreateFileA(const char* name, u32 access, u32 share, void* sa, u32 disp, u32 flags, HANDLE tmpl)
+{
+    HANDLE h = CreateFileA(name, access, share, sa, disp, flags, tmpl);
+    if (h == (HANDLE)-1) { log_str("[pc] file did not open: "); log_str(name); log_str("\n"); }
+    return h;
+}

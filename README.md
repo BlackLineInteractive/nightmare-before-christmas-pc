@@ -148,11 +148,16 @@ Control runtime behavior via environment variables:
 | :--- | :--- |
 | `PC_SHOT=<n>` | Save the back buffer to `shot_<frame>.bmp` at frames *n*, 3*n*, 6*n* (**F12** saves anytime) |
 | `PC_DUMPTEX=1` | Dump every uploaded texture to `tex_<addr>.bin` (header + raw data) |
-| `PC_TRACE=<n>` | Log draw calls of frame *n* (prim, count, stride, shader, textures, blend states) |
+| `PC_TRACE=<n>` / `auto` | Log draw calls of frame *n* (or 300 frames into the 3D world) with screenshots; with it set, **T** traces the next frame |
+| `PC_AUDIODELAY=<ms>` | Delay sounds to line them up with the picture (default 100) |
+| `PC_KEYS=<frame>:<buttons>,...` | Scripted pad input for tests, held 8 frames: `S` start, `K` back, `A B X Y`, `U D L R`; `P` saves a screenshot at that frame (e.g. `PC_KEYS=300:S,1300:P`) |
+| `PC_AUDIOLOG=1` | Log every cue, stop and notification (slows the game: the console is slow under Wine) |
+| `PC_FRAMESKIP=0` | Draw every frame even when the game falls behind real time (it then runs in slow motion) |
+| `PC_NOSOUND=1` / `PC_AUDIODUMP=1` | No sound / also write the mixed sound to `audio_dump.raw` (48 kHz stereo 16-bit) |
 | `PC_FLAT=1` | Draw without the game's pixel shaders (Direct3D 9 texture stages only) |
 | `PC_SHADOWS=1` | Turn the stencil shadows on (`v`: only the volumes, `s`: only the shading pass) |
 
-Press **T** at runtime to trace the next frame (one line per draw, plus `tr__*.bmp` screenshots at each vertex shader change). Every 64 frames the log shows FPS and where the frame time goes (Present, draw calls, texture uploads, vertex bytes copied, batched draws).
+A trace writes one line per draw plus `tr__*.bmp` screenshots at each vertex shader change. Every 64 frames the log shows FPS and where the frame time goes (Present, draw calls, texture uploads, vertex bytes copied, batched draws).
 
 ### Performance notes
 

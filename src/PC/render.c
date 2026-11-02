@@ -75,6 +75,10 @@ static void   default_xbox_state(void);
 static void   maybe_screenshot(void);
 static int    fmt_linear(u32 f);
 static void   batch_flush(void);
+static void   scripted_shots(void);
+static void   vblank_fire(void);
+static int    g_skip_render;      /* this frame is not drawn (frame skip, see pc_Swap) */
+IMPORT u32    WINAPI GetEnvironmentVariableA(const char* name, char* buf, u32 n);
 static XRes   g_backbuffer, g_depth;
 static XRes*  g_textures[4];
 static float  g_transforms[16][16];
@@ -164,7 +168,7 @@ HRESULT WINAPI pc_CreateDevice(u32 adapter, u32 type, HWND focus, u32 flags, u32
 HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, float z, u32 stencil)
 {
     g_stat_clear++;
-    if (!g_dev) return 0;
+    if (!g_dev || g_skip_render) return 0;
     batch_flush();
     if (g_rt_offscreen) { g_stat_rt_skipped++; return 0; }
     u32 f = 0;
@@ -182,18 +186,49 @@ HRESULT WINAPI pc_Clear(u32 count, const void* rects, u32 flags, u32 color, floa
     return VCALL(g_dev, DEV_Clear, PFN_Clear)(g_dev, count, rects, f, color, z, stencil);
 }
 
+/* Frame skip. The game moves everything one step per frame (1/60 s on the
+ * Xbox), so a slow frame means slow motion and sound running ahead of
+ * cutscenes. When the game falls behind real time, the next frame's logic
+ * runs but nothing is drawn (draws, clears and Present are dropped), at most
+ * two frames in a row, and starts without waiting for a vblank.
+ * PC_FRAMESKIP=0 turns it off. */
+static int g_frameskip = -1;
+static u32 g_stat_undrawn;
+
+static void frame_pacing(void)
+{
+    static u32 last, skipped_in_row;
+    static s32 debt;                       /* us behind real time */
+    if (g_frameskip < 0) { char b[4]; g_frameskip = !(GetEnvironmentVariableA("PC_FRAMESKIP", b, 4) > 0 && b[0] == '0'); }
+    u32 now = ticks();
+    if (last) {
+        s32 dt = (s32)((float)(now - last) * g_us_per_tick);
+        debt += dt - 16667;
+        if (debt > 250000) debt = 0;                   /* loading, a pause: start over */
+        if (debt < -16667) debt = -16667;
+    }
+    last = now;
+    /* behind by a frame or more: release the next one now instead of at the
+     * next vblank (a vblank missed during a slow frame is otherwise lost) */
+    if (g_frameskip && debt >= 16667) vblank_fire();
+    if (g_skip_render) { g_stat_undrawn++; skipped_in_row++; } else skipped_in_row = 0;
+    g_skip_render = g_frameskip && debt > 20000 && skipped_in_row < 2;
+}
+
 /* Swap(Flags) */
 u32 WINAPI pc_Swap(u32 flags)
 {
-    if (g_dev) {
+    if (g_dev && !g_skip_render) {
         batch_flush();
         maybe_screenshot();
+        scripted_shots();
         u32 t = ticks();
         VCALL(g_dev, DEV_EndScene, PFN_Scene)(g_dev);
         VCALL(g_dev, DEV_Present, PFN_Present)(g_dev, NULL, NULL, NULL, NULL);
         VCALL(g_dev, DEV_BeginScene, PFN_Scene)(g_dev);
         g_us_present += us_since(t);
     }
+    frame_pacing();
     pump();
     if ((++g_frames & 63) == 1) {
         log_hex("[pc] frame", g_frames);
@@ -213,7 +248,9 @@ u32 WINAPI pc_Swap(u32 flags)
             log_dec("[pc]   KB/frame vertex copy", g_vb_bytes / 64 / 1024);
             log_dec("[pc]   skipped (render to texture)", g_stat_rt_skipped);
             log_dec("[pc]   batched draws/frame", g_stat_batches / 64);
+            log_dec("[pc]   frames not drawn (behind real time)", g_stat_undrawn);
         }
+        g_stat_undrawn = 0;
         g_stat_batches = g_us_present = g_us_draw = g_us_upload = g_n_upload = g_vb_bytes = 0;
         g_frame_t0 = ticks();
     }
@@ -417,6 +454,16 @@ static HANDLE g_vblank_event;            /* signalled every vblank, for BlockUnt
 IMPORT BOOL   WINAPI SetWaitableTimer(HANDLE t, const u64* due, s32 period, void* fn, void* arg, BOOL resume);
 IMPORT u32    WINAPI WaitForSingleObject(HANDLE h, u32 ms);
 
+/* one vertical blank: the game's callbacks (they release its next frame) */
+static void vblank_fire(void)
+{
+    g_vblank_data[0]++;
+    g_vblank_data[1] = g_frames;
+    for (int i = 0; i < 2; i++)
+        if (g_vblank_cb[i]) g_vblank_cb[i](g_vblank_data);
+    if (g_vblank_event) SetEvent(g_vblank_event);
+}
+
 static u32 WINAPI vblank_thread(void* arg)
 {
     HANDLE t = CreateWaitableTimerA(NULL, 0, NULL);
@@ -436,11 +483,7 @@ static u32 WINAPI vblank_thread(void* arg)
             SetWaitableTimer(t, &due, 0, NULL, NULL, 0);
             WaitForSingleObject(t, 0xFFFFFFFF);
         }
-        g_vblank_data[0]++;
-        g_vblank_data[1] = g_frames;
-        for (int i = 0; i < 2; i++)
-            if (g_vblank_cb[i]) g_vblank_cb[i](g_vblank_data);
-        SetEvent(g_vblank_event);
+        vblank_fire();
     }
 }
 u32  WINAPI pc_Get1(u32 v) { return 0; }
