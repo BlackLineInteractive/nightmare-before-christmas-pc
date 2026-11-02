@@ -152,6 +152,7 @@ Control runtime behavior via environment variables:
 | `PC_AUDIODELAY=<ms>` | Delay sounds to line them up with the picture (default 100) |
 | `PC_KEYS=<frame>:<buttons>,...` | Scripted pad input for tests, held 8 frames: `S` start, `K` back, `A B X Y`, `U D L R`; `P` saves a screenshot at that frame (e.g. `PC_KEYS=300:S,1300:P`) |
 | `PC_AUDIOLOG=1` | Log every cue, stop and notification (slows the game: the console is slow under Wine) |
+| `PC_FILELOG=1` | Log every file the game fails to open (it probes many optional loose files under `data\`) |
 | `PC_FRAMESKIP=0` | Draw every frame even when the game falls behind real time (it then runs in slow motion) |
 | `PC_NOSOUND=1` / `PC_AUDIODUMP=1` | No sound / also write the mixed sound to `audio_dump.raw` (48 kHz stereo 16-bit) |
 | `PC_FLAT=1` | Draw without the game's pixel shaders (Direct3D 9 texture stages only) |
