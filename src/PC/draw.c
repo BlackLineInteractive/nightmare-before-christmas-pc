@@ -405,6 +405,8 @@ static IUnk* g_ring;
 static u32   g_ring_pos;
 static IUnk* g_quad_ib;
 static u32   g_ring_stride0;                  /* stride the ring is bound with on stream 0, 0 = not bound */
+static IUnk* g_stream9[16];                   /* cached vertex buffer each D3D9 stream has, NULL = ring */
+static u32   g_stream9_stride[16];
 
 /* Xbox primitive -> D3D9 type and primitive count */
 static u32 prim9(u32 prim, u32 count, u32* n)
@@ -483,9 +485,66 @@ static void draw_one_stream(u32 prim, const void* src, u32 count, u32 stride)
     g_vb_bytes += bytes;
     if (g_ring_stride0 != stride) {
         VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, 0, g_ring, 0, stride);
-        g_ring_stride0 = stride;
+        g_ring_stride0 = stride; g_stream9[0] = NULL;
     }
     draw9(prim, pos / stride, count);
+}
+
+/* Vertex-buffer cache. The game's vertex buffers (level geometry, models)
+ * hardly ever change, so each range a draw uses gets its own MANAGED D3D9
+ * buffer, filled once; a checksum taken once per frame catches the ones the
+ * game rewrites. A draw is then SetStreamSource + Draw, no copy. */
+typedef HRESULT (WINAPI *PFN_CreateVB9)(IUnk*, u32, u32, u32, u32, IUnk**, void*);
+typedef struct { u32 data, bytes, sum, frame; IUnk* vb; } VBEntry;
+#define VBC_SIZE 4096
+static VBEntry g_vbc[VBC_SIZE];
+
+static u32 vb_sum(const u32* p, u32 n)
+{
+    u32 s = 2166136261u;
+    for (u32 i = 0; i < n; i++) s = (s ^ p[i]) * 16777619u;
+    return s;
+}
+
+static int vb_fill(IUnk* vb, const void* src, u32 bytes)
+{
+    u8* dst;
+    if (VCALL(vb, 11, PFN_VBLock)(vb, 0, 0, (void**)&dst, 0) < 0) return 0;
+    memcpy(dst, src, bytes);
+    VCALL(vb, 12, PFN_VBUnlock)(vb);
+    return 1;
+}
+
+/* D3D9 buffer holding bytes at src, or NULL (then the ring is used) */
+static IUnk* vb_cached(const u8* src, u32 bytes)
+{
+    if (bytes & 3) return NULL;
+    u32 key = (u32)src, h = (key >> 4 ^ bytes * 2654435761u) & (VBC_SIZE - 1);
+    VBEntry* e = NULL;
+    for (u32 i = 0; i < 8; i++) {
+        VBEntry* c = &g_vbc[(h + i) & (VBC_SIZE - 1)];
+        if (c->data == key && c->bytes == bytes) { e = c; break; }
+        if (!c->vb && !e) e = c;
+    }
+    if (!e) {                                       /* all 8 taken: reuse the least recently used */
+        e = &g_vbc[h];
+        for (u32 i = 1; i < 8; i++) { VBEntry* c = &g_vbc[(h + i) & (VBC_SIZE - 1)]; if (c->frame < e->frame) e = c; }
+    }
+    if (e->data == key && e->bytes == bytes && e->vb) {
+        if (e->frame != g_frames) {
+            e->frame = g_frames;
+            u32 sum = vb_sum((const u32*)src, bytes / 4);
+            if (sum != e->sum) { e->sum = sum; g_vb_bytes += bytes; if (!vb_fill(e->vb, src, bytes)) return NULL; }
+        }
+        return e->vb;
+    }
+    if (e->vb) { VCALL(e->vb, 2, PFN_Scene)(e->vb); e->vb = NULL; }
+    if (VCALL(g_dev, DEV_CreateVertexBuffer, PFN_CreateVB9)(g_dev, bytes, 8 /* WRITEONLY */, 0, 1 /* MANAGED */,
+                                                            &e->vb, NULL) < 0) { e->vb = NULL; e->data = 0; return NULL; }
+    e->data = key; e->bytes = bytes; e->frame = g_frames; e->sum = vb_sum((const u32*)src, bytes / 4);
+    g_vb_bytes += bytes;
+    if (!vb_fill(e->vb, src, bytes)) return NULL;
+    return e->vb;
 }
 
 /* Vertices from Xbox memory (stream data). */
@@ -494,8 +553,19 @@ static void draw_streams(u32 prim, u32 start, u32 count)
     if (!ring_init()) return;
     for (u32 s = 0; s < 16; s++) {
         if (!g_stream[s] || !g_stride[s]) continue;
-        const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * g_stride[s];
-        if (!ring_stream(s, src, count * g_stride[s], g_stride[s])) return;
+        u32 stride = g_stride[s], bytes = count * stride;
+        const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * stride;
+        IUnk* vb = vb_cached(src, bytes);
+        if (vb) {
+            if (g_stream9[s] != vb || g_stream9_stride[s] != stride) {
+                VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, s, vb, 0, stride);
+                g_stream9[s] = vb; g_stream9_stride[s] = stride;
+                if (s == 0) g_ring_stride0 = 0;
+            }
+        } else {
+            if (!ring_stream(s, src, bytes, stride)) return;
+            g_stream9[s] = NULL;
+        }
     }
     draw9(prim, 0, count);
 }
