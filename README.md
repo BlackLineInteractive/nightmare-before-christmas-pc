@@ -12,7 +12,7 @@
   <img src="media/cover.webp" alt="The Nightmare Before Christmas: Oogie's Revenge" width="320">
 </p>
 
-**OogieEngine** is a modern, high-performance reverse-engineering toolkit and native game engine recreation for Capcom's 2004–2005 classic: ***Tim Burton's The Nightmare Before Christmas: Oogie's Revenge*** (Original Xbox / PS2).
+**OogieEngine** is a modern, high-performance reverse-engineering toolkit and native game engine recreation for Capcom's 2004-2005 classic: ***Tim Burton's The Nightmare Before Christmas: Oogie's Revenge*** (Original Xbox / PS2).
 
 Inspired by modern engine reconstruction projects such as [*OpenGOAL*](https://github.com/open-goal/jak-project), [*OpenLara*](https://github.com/XProger/OpenLara), and [*Climax Game Engine Toolkit*](https://github.com/BlackLineInteractive/Climax_Game_Engine_Toolkit), this project extracts, decodes, and renders the game's proprietary **Capcom RD3 Engine** formats at high framerates with customizable shaders, a comprehensive Dear ImGui debugging suite, and a roadmap toward a full playable PC port.
 
@@ -178,11 +178,11 @@ Reads the XbSymbolDatabase signature tables as data (nothing is compiled) and pr
 
 ### Porting route
 
-Static analysis shows **the game code itself (`0x12000`–`0x1A0000`) never calls the Xbox kernel**. All 125 kernel imports are used only by statically linked Microsoft libraries:
+Static analysis shows **the game code itself (`0x12000`-`0x1A0000`) never calls the Xbox kernel**. All 125 kernel imports are used only by statically linked Microsoft libraries:
 
 | Library | Location | Kernel call sites | Replacement |
 | :--- | :--- | ---: | :--- |
-| XAPI + LIBC | `.text` `0x1A0000`–`0x1D22A8` | 320 | XAPI is a Win32 subset → jump to the same function in Windows `kernel32.dll` |
+| XAPI + LIBC | `.text` `0x1A0000`-`0x1D22A8` | 320 | XAPI is a Win32 subset → jump to the same function in Windows `kernel32.dll` |
 | D3D8 | `D3D` | 37 | Direct3D 9 renderer (`src/PC/render.c`, `draw.c`, `vshader.c`) |
 | DirectSound | `DSOUND` | 186 | audio, not yet (stubbed) |
 | XACT | `XACTENG` | 140 | audio, not yet (stubbed in `src/PC/audio.c`) |

@@ -635,6 +635,9 @@ static int skip_shadow_pass(void)
  * is drawn, cleared or presented. The state is compared through a checksum of everything a draw
  * applies: render / texture-stage state, vertex constants, shaders, textures. */
 static u32 g_batch_sig, g_batch_start, g_batch_verts, g_batch_stride;
+static u8* g_batch_ptr;                       /* ring locked for the batch, up to g_batch_cap vertices */
+static u32 g_batch_cap;
+#define BATCH_LOCK 0x10000u                   /* bytes locked at a time */
 
 static u32 state_sig(void)
 {
@@ -650,8 +653,13 @@ static u32 state_sig(void)
 
 static void batch_flush(void)
 {
-    if (!g_batch_verts) return;
+    if (!g_batch_ptr) return;
+    VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
+    g_batch_ptr = NULL;
+    g_ring_pos = (g_batch_start + g_batch_verts) * g_batch_stride;
+    g_vb_bytes += g_batch_verts * g_batch_stride;
     draw9(8, g_batch_start, g_batch_verts);
+    g_stat_batches++;
     g_batch_verts = 0;
 }
 
@@ -666,32 +674,28 @@ static void copy_strip_as_quad(u8* dst, const u8* src, u32 stride)
 /* 1 if the strip was added to the batch (or started one) */
 static int batch_strip(const void* data, u32 stride)
 {
-    u32 sig = state_sig(), bytes = 4 * stride;
-    if (g_batch_verts && sig == g_batch_sig && stride == g_batch_stride && g_batch_verts < MAX_QUADS * 4 &&
-        g_ring_pos == (g_batch_start + g_batch_verts) * stride && g_ring_pos + bytes <= RING_SIZE) {
-        u8* dst;
-        if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, g_ring_pos, bytes, (void**)&dst, 0x1000) < 0) return 0;
-        copy_strip_as_quad(dst, data, stride);
-        VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
-        g_ring_pos += bytes; g_vb_bytes += bytes; g_batch_verts += 4;
+    u32 sig = state_sig();
+    if (g_batch_ptr && sig == g_batch_sig && stride == g_batch_stride && g_batch_verts + 4 <= g_batch_cap) {
+        copy_strip_as_quad(g_batch_ptr + g_batch_verts * stride, data, stride);
+        g_batch_verts += 4;
         return 1;
     }
     batch_flush();
     if (!bind_vshader()) { g_stat_skipped++; return 1; }
     apply_state();
     if (!ring_init()) return 1;
-    u32 pos = (g_ring_pos + stride - 1) / stride * stride, flags = 0x1000;
-    if (pos + bytes > RING_SIZE) { pos = 0; flags = 0x2000; }
-    u8* dst;
-    if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, pos, bytes, (void**)&dst, flags) < 0) return 1;
-    copy_strip_as_quad(dst, data, stride);
-    VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
-    g_ring_pos = pos + bytes; g_vb_bytes += bytes;
+    u32 pos = (g_ring_pos + stride - 1) / stride * stride, flags = 0x1000;     /* NOOVERWRITE */
+    u32 lock = BATCH_LOCK / stride * stride;
+    if (lock > MAX_QUADS * 4 * stride) lock = MAX_QUADS * 4 * stride;
+    if (pos + lock > RING_SIZE) { pos = 0; flags = 0x2000; }                   /* DISCARD */
+    if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, pos, lock, (void**)&g_batch_ptr, flags) < 0) { g_batch_ptr = NULL; return 1; }
     if (g_ring_stride0 != stride) {
         VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, 0, g_ring, 0, stride);
         g_ring_stride0 = stride; g_stream9[0] = NULL;
     }
-    g_batch_sig = sig; g_batch_stride = stride; g_batch_start = pos / stride; g_batch_verts = 4;
+    g_batch_sig = sig; g_batch_stride = stride; g_batch_start = pos / stride; g_batch_cap = lock / stride;
+    copy_strip_as_quad(g_batch_ptr, data, stride);
+    g_batch_verts = 4;
     return 1;
 }
 

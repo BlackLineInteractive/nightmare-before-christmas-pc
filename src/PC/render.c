@@ -66,7 +66,7 @@ static u32    g_width = 640, g_height = 480;
 static u32    g_frames;
 static u32    g_stat_draw_up, g_stat_draw, g_stat_tex, g_stat_clear, g_stat_skipped;
 /* timing of the last 64 frames, microseconds */
-static u32    g_rt_offscreen, g_stat_rt_skipped;   /* SetRenderTarget to a texture (not done yet) */
+static u32    g_rt_offscreen, g_stat_rt_skipped, g_stat_batches;   /* SetRenderTarget to a texture (not done yet) */
 static u32    g_us_present, g_us_draw, g_us_upload, g_n_upload, g_vb_bytes, g_frame_t0;
 static void   tex_invalidate(const void* res);
 static void   default_xbox_state(void);
@@ -208,8 +208,9 @@ u32 WINAPI pc_Swap(u32 flags)
             log_dec("[pc]   texture uploads", g_n_upload);
             log_dec("[pc]   KB/frame vertex copy", g_vb_bytes / 64 / 1024);
             log_dec("[pc]   skipped (render to texture)", g_stat_rt_skipped);
+            log_dec("[pc]   batched draws/frame", g_stat_batches / 64);
         }
-        g_us_present = g_us_draw = g_us_upload = g_n_upload = g_vb_bytes = 0;
+        g_stat_batches = g_us_present = g_us_draw = g_us_upload = g_n_upload = g_vb_bytes = 0;
         g_frame_t0 = ticks();
     }
     return 0;
