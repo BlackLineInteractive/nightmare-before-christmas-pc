@@ -111,6 +111,7 @@ RTINIT, CINIT, GAME_MAIN = 0x1c0a91, 0x1c0a39, 0x1aef10
 PATH_PATCHES = [
     (0x1a8910, bytes.fromhex('c60064'), bytes.fromhex('c6002e')),  # 'd' -> '.'
     (0x1a8914, bytes.fromhex('c6003a'), bytes.fromhex('c6005c')),  # ':' -> '\'
+    (0x2bd4e0, b'u:\\', b'.\\\\'),                               # save root in .data -> game folder
 ]
 # Literal drive paths in .rdata -> relative to the game folder.
 DRIVE_PREFIXES = [b'd:\\', b'D:\\', b't:\\', b'T:\\', b'u:\\']
