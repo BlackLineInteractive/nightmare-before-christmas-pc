@@ -273,6 +273,7 @@ static int g_debug_flat = -1;    /* env PC_FLAT=1: vertex colour only, no blendi
 static void apply_state(void)
 {
     if (g_debug_flat < 0) { char b[4]; g_debug_flat = GetEnvironmentVariableA("PC_FLAT", b, 4) > 0 ? b[0] - '0' : 0; }
+    if (g_debug_flat && g_bound_ps9) { VCALL(g_dev, DEV_SetPixelShader9, PFN_SetObj)(g_dev, NULL); g_bound_ps9 = NULL; }
     if (g_debug_flat == 2) {      /* texture x vertex colour x 2, alpha blended */
         rs(RS_ZENABLE, 0); rs(RS_ALPHABLENDENABLE, 1); rs(RS_SRCBLEND, 5); rs(RS_DESTBLEND, 6);
         rs(RS_ALPHATESTENABLE, 0); rs(RS_CULLMODE, 1); rs(RS_LIGHTING, 0); rs(RS_COLORWRITEENABLE, 15);
@@ -308,6 +309,7 @@ static void apply_state(void)
     rs(RS_TEXTUREFACTOR, XRS(XRS_TEXTUREFACTOR));
     rs(RS_COLORWRITEENABLE, XRS(XRS_COLORWRITEENABLE) ? map_colorwrite(XRS(XRS_COLORWRITEENABLE)) : 15);
 
+    int ps = bind_pshader();
     for (u32 s = 0; s < 4; s++) {
         IUnk* t = g_textures[s] ? get_texture((const u32*)g_textures[s]) : NULL;
         set_tex9(s, t);
@@ -329,7 +331,7 @@ static void apply_state(void)
         samp(s, SAMP_MAGFILTER, XTS(s, XTS_MAGFILTER) > 3 ? 2 : XTS(s, XTS_MAGFILTER));
         samp(s, SAMP_MINFILTER, XTS(s, XTS_MINFILTER) > 3 ? 2 : XTS(s, XTS_MINFILTER));
         samp(s, SAMP_MIPFILTER, XTS(s, XTS_MIPFILTER) > 3 ? 2 : XTS(s, XTS_MIPFILTER));
-        if (cop == 1) break;                 /* later stages are off too */
+        if (cop == 1 && !ps) break;          /* later stages are off too (a pixel shader reads all 4) */
     }
 
     /* Xbox D3DTS: VIEW 0, PROJECTION 1, TEXTURE0..3 2..5, WORLD 6 */
@@ -446,32 +448,49 @@ static void draw_streams(u32 prim, u32 start, u32 count)
     draw9(prim, count);
 }
 
-/* env PC_TRACE=<frame>: log every draw of that frame (and its vertex shader /
- * FVF, texture 0 and first vertex) */
+/* Draw trace: env PC_TRACE=<frame>, the key T for the next frame, and once by
+ * itself 300 frames after the first vertex-buffer draw (the 3D world). One line per
+ * draw: kind, prim, count, stride, vertex shader / FVF, texture 0 format,
+ * Z enable / func, cull, blend src / dst, stream 0 Data, first vertex. */
+static char* hx(char* p, u32 v) { *p++ = ' '; for (int k = 7; k >= 0; k--) *p++ = "0123456789abcdef"[(v >> (k * 4)) & 15]; return p; }
+
+static u32 g_trace_auto, g_shot_at;
+static void save_screenshot(void);
+
 static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32 stride)
 {
-    static u32 at = 0xFFFFFFFF;
+    static u32 at = 0xFFFFFFFF, key_was;
     if (at == 0xFFFFFFFF) {
         char b[16]; u32 n = GetEnvironmentVariableA("PC_TRACE", b, sizeof b);
         at = 0;
         for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
     }
+    u32 key = (GetAsyncKeyState('T') & 0x8000) != 0;
+    if (key && !key_was) { at = g_frames + 1; log_hex("[pc] trace at frame", at); }
+    key_was = key;
+    if (!g_trace_auto && what[5] == 'V') { g_trace_auto = 1; at = g_frames + 300; log_hex("[pc] trace at frame", at); }
+    if (at && g_frames == at + 1 && g_shot_at != at + 1) { g_shot_at = at + 1; save_screenshot(); }
     if (!at || g_frames != at) return;
-    log_str(what);
-    log_hex("  prim", prim); log_hex("  count", count); log_hex("  stride", stride);
-    log_hex("  vshader", g_vshader);
+    char b[256], *p = b;
+    while (*what) *p++ = *what++;
     const u32* t = (const u32*)g_textures[0];
-    log_hex("  tex0 format", t ? t[3] : 0);
-    log_hex("  colorop0", XTS(0, XTS_COLOROP)); log_hex("  tfactor", XRS(XRS_TEXTUREFACTOR));
-    log_hex("  blend on", XRS(XRS_ALPHABLENDENABLE)); log_hex("  src", XRS(XRS_SRCBLEND)); log_hex("  dst", XRS(XRS_DESTBLEND));
-    if (v) for (u32 i = 0; i < stride / 4 && i < 8; i++) log_hex("  v0", ((const u32*)v)[i]);
+    p = hx(p, prim); p = hx(p, count); p = hx(p, stride); p = hx(p, g_vshader); p = hx(p, t ? t[3] : 0);
+    p = hx(p, XRS(XRS_ZENABLE)); p = hx(p, XRS(XRS_ZFUNC)); p = hx(p, XRS(XRS_CULLMODE));
+    p = hx(p, XRS(XRS_SRCBLEND)); p = hx(p, XRS(XRS_DESTBLEND));
+    p = hx(p, g_stream[0] ? g_stream[0]->Data : 0);
+    p = hx(p, g_pshader); p = hx(p, XTS(0, XTS_COLOROP) << 16 | XTS(0, XTS_COLORARG1) << 8 | XTS(0, XTS_COLORARG2));
+    p = hx(p, XTS(1, XTS_COLOROP));
+    *p++ = ' '; *p++ = '|';
+    if (v) for (u32 i = 0; i < stride / 4 && i < 6; i++) p = hx(p, ((const u32*)v)[i]);
+    *p++ = '\n'; *p = 0;
+    log_str(b);
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
 void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 {
     g_stat_draw_up++;
-    trace_draw("[pc] DrawVerticesUP\n", prim, count, data, stride);
+    trace_draw("[tr] UP", prim, count, data, stride);
     if (!g_dev || !data || !count) return;
     u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
@@ -484,7 +503,7 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
 void WINAPI pc_DrawVertices(u32 prim, u32 start, u32 count)
 {
     g_stat_draw++;
-    trace_draw("[pc] DrawVertices\n", prim, count,
+    trace_draw("[tr] VB", prim, count,
                g_stream[0] ? (const u8*)(g_stream[0]->Data | 0x80000000u) + start * g_stride[0] : NULL, g_stride[0]);
     if (!g_dev || !count) return;
     u32 t0 = ticks();

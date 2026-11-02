@@ -318,7 +318,15 @@ HRESULT WINAPI pc_SetScissors(u32 count, BOOL exclusive, const void* rects) { re
 HRESULT WINAPI pc_GetTile(u32 index, u32* tile) { memset(tile, 0, 24); return 0; }
 HRESULT WINAPI pc_SetTile(u32 index, const u32* tile) { return 0; }
 void WINAPI pc_SetScreenSpaceOffset(float x, float y) { }
-void WINAPI pc_SetGammaRamp(u32 flags, const void* ramp) { }
+/* SetGammaRamp(Flags, pRamp): D3DGAMMARAMP = BYTE red[256], green[256], blue[256] on the Xbox */
+void WINAPI pc_SetGammaRamp(u32 flags, const void* ramp)
+{
+    const u8* r = ramp;
+    if (!r) return;
+    log_hex("[pc] SetGammaRamp red[0,64,128,192,255]",
+            r[0] << 24 | r[64] << 16 | r[128] << 8 | r[192]);
+    log_hex("[pc]   red[255] green[128] blue[128]", r[255] << 16 | r[256 + 128] << 8 | r[512 + 128]);
+}
 
 void FASTCALL pc_SetRenderState_Simple(u32 method, u32 value) { }
 void WINAPI pc_SetRenderState_1(u32 value) { }      /* FogColor, CullMode, ZEnable, ... */
@@ -326,14 +334,9 @@ void WINAPI pc_SetTextureState_TexCoordIndex(u32 stage, u32 value) { }
 
 /* ---------------------------------------------------------------- shaders */
 
-static u32 g_pshader;
-/* vertex shaders: vshader.c */
+/* vertex shaders: vshader.c, pixel shaders: pshader.c */
 HRESULT WINAPI pc_GetVertexShaderSize(u32 handle, u32* size) { *size = 0; return 0; }
 HRESULT WINAPI pc_SetShaderConstantMode(u32 mode) { return 0; }
-HRESULT WINAPI pc_CreatePixelShader(const void* def, u32* handle) { static u32 next = 1; *handle = next++; return 0; }
-HRESULT WINAPI pc_SetPixelShader(u32 handle) { g_pshader = handle; return 0; }
-HRESULT WINAPI pc_GetPixelShader(u32* handle) { *handle = g_pshader; return 0; }
-HRESULT WINAPI pc_SetPixelShaderProgram(const void* def) { return 0; }
 
 /* ------------------------------------------------------------------ draw */
 

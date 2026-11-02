@@ -6,6 +6,7 @@
 #include "memory.c"
 #include "render.c"
 #include "vshader.c"
+#include "pshader.c"
 #include "draw.c"
 #include "input.c"
 #include "audio.c"

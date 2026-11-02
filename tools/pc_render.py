@@ -10,6 +10,7 @@ import os
 import subprocess
 
 import nv2a_vsh
+import nv2a_psh
 
 SRC = 'src/PC/pc.c'
 OBJ = 'build/pc/pc.o'
@@ -157,9 +158,11 @@ def dll_of(fn):
 def compile_renderer():
     """clang -c src/PC/pc.c -> i386 COFF object (any clang with the x86 backend).
 
-    The game's vertex shaders are translated first (build/pc/vshaders.inc)."""
+    The game's vertex and pixel shaders are translated first (build/pc/vshaders.inc, pshaders.inc)."""
     os.makedirs(os.path.dirname(OBJ), exist_ok=True)
-    nv2a_vsh.emit_c(nv2a_vsh.xbe_reader('rom/extracted/default.xbe'), os.path.join(os.path.dirname(OBJ), 'vshaders.inc'))
+    read_u32 = nv2a_vsh.xbe_reader('rom/extracted/default.xbe')
+    nv2a_vsh.emit_c(read_u32, os.path.join(os.path.dirname(OBJ), 'vshaders.inc'))
+    nv2a_psh.emit_c(read_u32, os.path.join(os.path.dirname(OBJ), 'pshaders.inc'))
     clang = os.environ.get('CLANG', 'clang')
     subprocess.run([clang, '--target=i686-pc-windows-gnu', '-c', '-O2', '-fno-omit-frame-pointer', '-ffreestanding', '-fno-builtin',
                     '-fno-stack-protector', '-fno-asynchronous-unwind-tables', '-fno-unwind-tables',
