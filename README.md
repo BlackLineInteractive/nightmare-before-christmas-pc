@@ -7,6 +7,10 @@
 [![Graphics](https://img.shields.io/badge/Renderer-Direct3D%209%20%2F%20OpenGL-orange.svg)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui-purple.svg)](https://github.com/ocornut/imgui)
 
+<p align="center">
+  <img src="media/cover.webp" alt="The Nightmare Before Christmas: Oogie's Revenge" width="300">
+</p>
+
 A modern, high-performance **native PC port** and reverse-engineering toolkit for Capcom's 2004-2005 classic: ***Tim Burton's The Nightmare Before Christmas: Oogie's Revenge*** (Original Xbox / PS2).
 
 Instead of running inside an emulator or waiting for a multi-year decompilation, the game's original x86 machine code runs **natively on the host CPU** with a 1:1 mapped PE binary, while graphics, input, audio, and OS calls are translated to modern Win32 and Direct3D 9 APIs.
