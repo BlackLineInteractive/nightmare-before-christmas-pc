@@ -404,6 +404,7 @@ typedef HRESULT (WINAPI *PFN_DrawIdx)(IUnk*, u32, s32, u32, u32, u32, u32);
 static IUnk* g_ring;
 static u32   g_ring_pos;
 static IUnk* g_quad_ib;
+static u32   g_ring_stride0;                  /* stride the ring is bound with on stream 0, 0 = not bound */
 
 /* Xbox primitive -> D3D9 type and primitive count */
 static u32 prim9(u32 prim, u32 count, u32* n)
@@ -450,18 +451,41 @@ static int ring_stream(u32 s, const void* src, u32 bytes, u32 stride)
     g_ring_pos = pos + bytes;
     g_vb_bytes += bytes;
     VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, s, g_ring, pos, stride);
+    if (s == 0) g_ring_stride0 = 0;            /* bound at an offset: draw_one_stream rebinds */
     return 1;
 }
 
-static void draw9(u32 prim, u32 count)
+static void draw9(u32 prim, u32 start, u32 count)
 {
     u32 n, t = prim9(prim, count, &n);
     if (!n) return;
     if (prim == 8) {
         if (count > MAX_QUADS * 4) count = MAX_QUADS * 4, n = MAX_QUADS * 2;
-        VCALL(g_dev, DEV_DrawIndexedPrimitive, PFN_DrawIdx)(g_dev, 4, 0, 0, count, 0, n);
+        VCALL(g_dev, DEV_DrawIndexedPrimitive, PFN_DrawIdx)(g_dev, 4, (s32)start, 0, count, 0, n);
     } else
-        VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, 0, n);
+        VCALL(g_dev, DEV_DrawPrimitive, PFN_DrawPrim)(g_dev, t, start, n);
+}
+
+/* One stream (every *UP draw): the ring stays bound at offset 0 and the draw
+ * starts at its vertex, so a draw is Lock, Unlock and Draw only. */
+
+static void draw_one_stream(u32 prim, const void* src, u32 count, u32 stride)
+{
+    u32 bytes = count * stride;
+    if (!ring_init() || !bytes || bytes > RING_SIZE) return;
+    u32 pos = (g_ring_pos + stride - 1) / stride * stride, flags = 0x1000;   /* NOOVERWRITE */
+    if (pos + bytes > RING_SIZE) { pos = 0; flags = 0x2000; }                /* DISCARD */
+    u8* dst;
+    if (VCALL(g_ring, 11, PFN_VBLock)(g_ring, pos, bytes, (void**)&dst, flags) < 0) return;
+    memcpy(dst, src, bytes);
+    VCALL(g_ring, 12, PFN_VBUnlock)(g_ring);
+    g_ring_pos = pos + bytes;
+    g_vb_bytes += bytes;
+    if (g_ring_stride0 != stride) {
+        VCALL(g_dev, DEV_SetStreamSource, PFN_SetStream)(g_dev, 0, g_ring, 0, stride);
+        g_ring_stride0 = stride;
+    }
+    draw9(prim, pos / stride, count);
 }
 
 /* Vertices from Xbox memory (stream data). */
@@ -473,7 +497,7 @@ static void draw_streams(u32 prim, u32 start, u32 count)
         const u8* src = (const u8*)(g_stream[s]->Data | 0x80000000u) + start * g_stride[s];
         if (!ring_stream(s, src, count * g_stride[s], g_stride[s])) return;
     }
-    draw9(prim, count);
+    draw9(prim, 0, count);
 }
 
 /* Draw trace: env PC_TRACE=<frame>, the key T for the next frame, and once by
@@ -521,13 +545,17 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     log_str(b);
 }
 
-/* Stencil shadows: the shading pass (stencil on, colour on) still comes out
- * black over the whole frame, so it is skipped unless env PC_SHADOWS=1. */
+/* Draws that are left out for now:
+ * - stencil shadows (volumes and shading; the shading pass does not work
+ *   yet), ~60% of a level's draws, unless env PC_SHADOWS=1;
+ * - draws into an off-screen render target (render-to-texture is not done
+ *   yet; they would land on the back buffer). */
 static int skip_shadow_pass(void)
 {
     static int shadows = -1;
     if (shadows < 0) { char b[4]; shadows = GetEnvironmentVariableA("PC_SHADOWS", b, 4) > 0 && b[0] == '1'; }
-    return !shadows && XRS(XRS_STENCILENABLE) && XRS(XRS_COLORWRITEENABLE);
+    if (g_rt_offscreen) { g_stat_rt_skipped++; return 1; }
+    return !shadows && XRS(XRS_STENCILENABLE);
 }
 
 /* DrawVerticesUP(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride) */
@@ -539,7 +567,7 @@ void WINAPI pc_DrawVerticesUP(u32 prim, u32 count, const void* data, u32 stride)
     u32 t0 = ticks();
     if (!bind_vshader()) { g_stat_skipped++; return; }
     apply_state();
-    if (ring_init() && ring_stream(0, data, count * stride, stride)) draw9(prim, count);
+    draw_one_stream(prim, data, count, stride);
     g_us_draw += us_since(t0);
 }
 
