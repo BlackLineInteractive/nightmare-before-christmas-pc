@@ -6,6 +6,7 @@
 [![Platform](https://img.shields.io/badge/PC%20Port-Windows%20%7C%20Wine%20(macOS%2FLinux)-lightgrey.svg)]()
 [![Graphics](https://img.shields.io/badge/Renderer-Direct3D%209%20%2F%20OpenGL-orange.svg)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui-purple.svg)](https://github.com/ocornut/imgui)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 <p align="center">
   <img src="media/cover.webp" alt="The Nightmare Before Christmas: Oogie's Revenge" width="300">
@@ -198,5 +199,7 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
 
 ## License
 
-This project is developed for educational and preservation purposes.  
-*Tim Burton's The Nightmare Before Christmas: Oogie's Revenge* is the property of Disney Interactive, Buena Vista Games, and Capcom Co., Ltd.
+This project is licensed under the **GNU General Public License v3.0 (GPLv3)** - see the [LICENSE](LICENSE) file for details.
+
+This reverse-engineering toolkit and native port are developed strictly for educational and preservation purposes.  
+*Tim Burton's The Nightmare Before Christmas: Oogie's Revenge* and its assets are the property of Disney Interactive, Buena Vista Games, and Capcom Co., Ltd.
