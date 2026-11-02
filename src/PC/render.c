@@ -75,6 +75,7 @@ static void stat_draw_thread(void)
 static void   tex_invalidate(const void* res);
 static void   default_xbox_state(void);
 static void   maybe_screenshot(void);
+static int    fmt_linear(u32 f);
 static XRes   g_backbuffer, g_depth;
 static XRes*  g_textures[4];
 static float  g_transforms[16][16];
@@ -249,8 +250,12 @@ XRes* WINAPI pc_GetSurfaceLevel2(XRes* t, u32 level)
     s->mem = level_ptr(t, level, &w, &h);
     s->Data = (u32)s->mem & 0x0FFFFFFFu;
     s->width = w; s->height = h; s->xfmt = t->xfmt; s->levels = 1; s->Parent = t;
-    s->Format = (t->Format & ~0x000F0000u) | (1 << 16);
-    s->Size = (w - 1) | ((h - 1) << 12);
+    /* The original D3DSurface_LockRect (still used by D3DX) takes the pitch
+     * from Size when it is set, so like the Xbox: swizzled / DXT surfaces
+     * keep Size 0 and their level's dimensions in Format, linear ones get
+     * Size with the pitch. */
+    s->Format = (t->Format & 0x0000FFFFu) | (1 << 16) | (log2u(w) << 20) | (log2u(h) << 24);
+    s->Size = fmt_linear(t->xfmt) ? (w - 1) | ((h - 1) << 12) | (((w * xfmt_bpp(t->xfmt) / 8 + 63) / 64 - 1) << 24) : 0;
     return s;
 }
 

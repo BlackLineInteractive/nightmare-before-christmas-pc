@@ -83,10 +83,7 @@ static u32 map_colorwrite(u32 v)   /* Xbox: R<<16, G<<8, B, A<<24 */
 
 /* ---------------------------------------------------------- texture cache */
 
-/* The game also writes texture memory directly (no LockRect), e.g. the font
- * is filled in after its first draw, so each entry keeps a checksum of the
- * Xbox data, checked once per frame, and is re-uploaded when it changes. */
-typedef struct { u32 key, data, format, size, sum, frame; IUnk* tex; } TexEntry;
+typedef struct { u32 key, data, format, size; IUnk* tex; } TexEntry;
 static TexEntry g_tex_cache[1024];
 
 static void tex_invalidate(const void* res)
@@ -145,25 +142,6 @@ static void dump_texture(const u32* res, const u8* src, u32 bytes)
     WriteFile(f, res, 20, &w, NULL);                 /* Xbox resource header */
     WriteFile(f, src, bytes, &w, NULL);
     CloseHandle(f);
-}
-
-/* bytes of all levels of an Xbox texture, as upload_texture reads them */
-static u32 texture_bytes(const u32* res)
-{
-    u32 format = res[3], size = res[4], f = (format >> 8) & 0xFF;
-    if (size) return ((size >> 24) + 1) * 64 * (((size >> 12) & 0xFFF) + 1);
-    u32 w = 1u << ((format >> 20) & 15), h = 1u << ((format >> 24) & 15), levels = (format >> 16) & 15, n = 0;
-    if (!levels) levels = 1;
-    for (u32 l = 0; l < levels; l++, w = w > 1 ? w / 2 : 1, h = h > 1 ? h / 2 : 1) n += level_bytes(f, w, h);
-    return n;
-}
-
-static u32 texture_sum(const u32* res)
-{
-    const u32* p = (const u32*)(res[1] | 0x80000000u);
-    u32 n = texture_bytes(res) / 4, s = 2166136261u;
-    for (u32 i = 0; i < n; i++) s = (s ^ p[i]) * 16777619u;
-    return s;
 }
 
 static IUnk* upload_texture(const u32* res)
@@ -226,18 +204,11 @@ static IUnk* get_texture(const u32* res)
     u32 slot = ((u32)res >> 4) & 1023;
     for (u32 i = 0; i < 1024; i++) {
         TexEntry* e = &g_tex_cache[(slot + i) & 1023];
-        if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) {
-            if (e->frame == g_frames) return e->tex;
-            e->frame = g_frames;
-            u32 sum = texture_sum(res);
-            if (sum == e->sum) return e->tex;
-            e->key = 0;                                       /* contents changed: upload again below */
-        }
+        if (e->key == (u32)res && e->data == res[1] && e->format == res[3] && e->size == res[4]) return e->tex;
         if (!e->key) {
             if (e->tex) VCALL(e->tex, 2, PFN_Scene)(e->tex);      /* Release a stale one */
             e->tex = upload_texture(res);
             e->key = (u32)res; e->data = res[1]; e->format = res[3]; e->size = res[4];
-            e->sum = texture_sum(res); e->frame = g_frames;
             return e->tex;
         }
     }
