@@ -20,10 +20,9 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 
 ## In-Game Screenshots (Native PC Port running under Wine / Direct3D 9)
 
-
 | Title Screen (*Press Start Button*) | Options Menu |
 | :---: | :---: |
-| ![Title Screen](media/pc-title-screen.webp) | ![Options Menu](media/pc-options-menu.png) |
+| ![Title Screen](media/pc-title-screen.png) | ![Options Menu](media/pc-options-menu.png) |
 | **Chapter 1: Jack's Return (Intro)** | **Cinematic Cutscene (Jack at Town Hall)** |
 | ![Chapter 1: Jack's Return](media/pc-chapter-1-jacks-return.png) | ![Cinematic Cutscene](media/pc-cutscene-jack.png) |
 | **Active 3D Gameplay (Halloween Town)** | **In-Game Action Menu (Soul Robber)** |
