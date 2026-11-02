@@ -29,7 +29,9 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 | **Active 3D Gameplay (Halloween Town)** | **In-Game Action Menu (Soul Robber)** |
 | ![Active 3D Gameplay](media/pc-gameplay-jack.png) | ![Action Menu](media/pc-action-menu.png) |
 
-> **Current Status:** The PC port boots directly into **active 3D gameplay** on Windows and under Wine on macOS. Jack Skellington (skeletal animation, Soul Robber, dynamic shadow projection), full 3D environments, 2D HUD overlays, and in-game pause/inventory menus are working. Sound (XACT stubs) and FMVs are in active development.
+> **Current status:** the port boots through the logos, title and menus into the levels, on Windows and under Wine on macOS. Jack (skinned animation, Soul Robber combos), the 3D levels with the game's own lighting (NV2A pixel shaders translated to HLSL), the HUD and the pause / inventory menus work.
+>
+> **Not yet:** sound (XACT is silent), Bink movies (skipped), render-to-texture effects (the Soul Robber glow), fog, the game's gamma ramp. Stencil shadows render correctly but are off by default (`PC_SHADOWS=1`): the game advances one logic step per frame, and with shadows it runs below 60 FPS, so in slow motion.
 
 ---
 
@@ -47,30 +49,40 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 
 ## Quick Start: Running the PC Port
 
-### 1. Generate the PC Executable (`default_pc.exe`)
+You need your own copy of the game: an image of the **Xbox** disc (the European release, `Oogie's Revenge (Europe) (En,Fr,De,Es,It)`, is the one tested). No game files are in this repository.
+
+**Requirements**
+
+| | macOS | Linux | Windows |
+| :--- | :--- | :--- | :--- |
+| Python | 3.8+ | 3.8+ | 3.8+ |
+| C compiler | Apple clang (Xcode command line tools) | clang | clang (LLVM) |
+| Runner | Wine (`brew install --cask wine@devel`) | Wine | native (Git Bash for `pc.sh`) |
+
+Nothing else: the C part (`src/PC`) has no headers or libraries to install, it declares the few Win32 / Direct3D 9 pieces it uses (`src/PC/win32.h`) and loads `d3d9.dll` and `d3dcompiler_47.dll` at run time (both ship with Windows and Wine).
+
+**1. Clone**
 
 ```bash
-# Clone the repository
-git clone https://github.com/BlackLineInteractive/nightmare-before-christmas-pc.git
+git clone --recursive https://github.com/BlackLineInteractive/nightmare-before-christmas-pc.git
 cd nightmare-before-christmas-pc
-
-# Generate flat 1:1 PE with patched libraries and src/PC/ runtime
-python3 tools/build_flat_pe.py
 ```
 
-*Prerequisites: `rom/extracted/default.xbe` from the original game disc and `clang` with x86 backend.*
-
-### 2. Run the Game
-
-Run from `rom/extracted/` so the game accesses its original assets:
+**2. Build** (put the disc image in `rom/` first; the first build extracts it to `rom/extracted/`)
 
 ```bash
-# Windows
-cd rom/extracted && default_pc.exe
-
-# macOS / Linux (via Wine)
-cd rom/extracted && wine default_pc.exe
+./pc.sh build
 ```
+
+This writes `rom/extracted/default_pc.exe`. Rebuild after changing anything in `src/PC` or `tools/`.
+
+**3. Run**
+
+```bash
+./pc.sh run
+```
+
+Controls: keyboard (arrows / WASD, Enter = Start, see `src/PC/input.c`) or an XInput gamepad. Saves go to `rom/extracted/` (the Xbox `U:` drive). `./pc.sh clean` removes the build output, screenshots and traces.
 
 ---
 
@@ -97,7 +109,8 @@ The original Xbox uses an Intel Pentium III (x86 32-bit). Because modern PCs als
          ├── D3D8 (Xbox) ──────► Direct3D 9 (render.c, draw.c)
          ├── NV2A Shaders ─────► HLSL (nv2a_vsh.py)
          ├── XPP Gamepad ──────► XInput + Keyboard (input.c)
-         └── XACT Sound ───────► DirectSound stubs (audio.c)
+         ├── NV2A combiners ───► HLSL pixel shaders (nv2a_psh.py, pshader.c)
+         └── XACT Sound ───────► silent stubs for now (audio.c)
 ```
 
 ### Porting Route
@@ -123,9 +136,14 @@ Control runtime behavior via environment variables:
 | `PC_SHOT=<n>` | Save the back buffer to `shot_<frame>.bmp` at frames *n*, 3*n*, 6*n* (**F12** saves anytime) |
 | `PC_DUMPTEX=1` | Dump every uploaded texture to `tex_<addr>.bin` (header + raw data) |
 | `PC_TRACE=<n>` | Log draw calls of frame *n* (prim, count, stride, shader, textures, blend states) |
-| `PC_FLAT=1` / `2` | Debug drawing: vertex color only / texture × vertex color |
+| `PC_FLAT=1` | Draw without the game's pixel shaders (Direct3D 9 texture stages only) |
+| `PC_SHADOWS=1` | Turn the stencil shadows on (`v`: only the volumes, `s`: only the shading pass) |
 
-Press **T** at runtime to trace the next frame. Draw/texture stats log to stdout every 64 frames.
+Press **T** at runtime to trace the next frame (one line per draw, plus `tr__*.bmp` screenshots at each vertex shader change). Every 64 frames the log shows FPS and where the frame time goes (Present, draw calls, texture uploads, vertex bytes copied, batched draws).
+
+### Performance notes
+
+Direct3D 9 under Wine on macOS goes through wined3d and OpenGL, which costs ~30-100 µs per draw call. The renderer caches the game's vertex buffers in MANAGED buffers (checksummed once per frame), streams the rest through one SYSTEMMEM ring, skips redundant state changes and batches the ~1700 tiny shadow strips per frame into a few hundred draws. Menus run at 60 FPS; levels at 30-60 without shadows.
 
 ---
 
@@ -181,18 +199,26 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
 ├── media/                   # In-game screenshots & documentation assets
 ├── include/OogieEngine/     # Public C++ Header API (Core, Loader, Rendering, UI)
 ├── src/
-│   ├── PC/                  # Native PC D3D9 / Win32 reimplementation (compiled into default_pc.exe)
-│   ├── Host/                # Native host runtime
+│   ├── PC/                  # The port's runtime: D3D9 renderer, shaders, input, audio, memory, libc glue
+│   │                        #   (one i386 object, linked into default_pc.exe by tools/coff_link.py)
+│   ├── Host/                # Earlier HLE-kernel prototype (CMake target oogie_port, not used by the port)
 │   ├── Viewer/              # Interactive 3D asset viewer app
 │   └── SG/, Loader/         # Scene graph, P2OD & STM parsers
 ├── docs/                    # Reverse-Engineering specifications
-├── rom/                     # Extracted game assets & structured stage data
+├── rom/                     # Your disc image and its extracted files (not in git)
+├── pc.sh                    # build / run / clean the PC port
 └── tools/
-    ├── build_flat_pe.py     # default.xbe -> default_pc.exe generator
-    ├── xapi_port.py         # XAPI -> Win32 thunk generator
-    ├── pc_render.py         # D3D8 / XPP / XACT entry point dispatcher
+    ├── build_flat_pe.py     # default.xbe -> default_pc.exe generator (patches, sections, linking)
+    ├── xapi_port.py         # XAPI -> Win32 tables, drive path patches
+    ├── pc_render.py         # D3D8 / XPP / XACT entry points -> src/PC, compiles src/PC
+    ├── coff_link.py         # links the src/PC object at a fixed address
     ├── nv2a_vsh.py          # NV2A vertex shaders -> HLSL
-    └── capcom_tool.py       # LZ decompression & @STM extraction
+    ├── nv2a_psh.py          # NV2A register combiners (pixel shaders) -> HLSL
+    ├── xbsymscan.py         # finds XDK library functions in default.xbe
+    ├── extract_xbox_iso.py  # XDVDFS disc image extractor
+    ├── capcom_tool.py       # LZ decompression & @STM extraction (viewer data)
+    ├── structure_stm.py     # catalogues extracted stages for the viewer
+    └── legacy/              # early prototypes, not used
 ```
 
 ---
