@@ -454,7 +454,7 @@ static void draw_streams(u32 prim, u32 start, u32 count)
  * Z enable / func, cull, blend src / dst, stream 0 Data, first vertex. */
 static char* hx(char* p, u32 v) { *p++ = ' '; for (int k = 7; k >= 0; k--) *p++ = "0123456789abcdef"[(v >> (k * 4)) & 15]; return p; }
 
-static u32 g_trace_auto, g_shot_at;
+static u32 g_trace_auto, g_trace_frame, g_shot_tag;
 static void save_screenshot(void);
 
 static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32 stride)
@@ -469,8 +469,11 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     if (key && !key_was) { at = g_frames + 1; log_hex("[pc] trace at frame", at); }
     key_was = key;
     if (!g_trace_auto && what[5] == 'V') { g_trace_auto = 1; at = g_frames + 300; log_hex("[pc] trace at frame", at); }
-    if (at && g_frames == at + 1 && g_shot_at != at + 1) { g_shot_at = at + 1; save_screenshot(); }
+    g_trace_frame = at;
     if (!at || g_frames != at) return;
+    /* the back buffer before each change of vertex shader: where the frame goes wrong */
+    static u32 last_vsh = 0xFFFFFFFF;
+    if (g_vshader != last_vsh && g_shot_tag < 40) { last_vsh = g_vshader; g_shot_tag++; save_screenshot(); }
     char b[256], *p = b;
     while (*what) *p++ = *what++;
     const u32* t = (const u32*)g_textures[0];
@@ -533,6 +536,7 @@ static void save_screenshot(void)
     VCALL(off, 13, PFN_SurfLock)(off, &lr, NULL, 0x10 /* READONLY */);
     char name[32] = "shot_00000.bmp";
     for (u32 v = g_frames, i = 9; i >= 5; i--, v /= 10) name[i] = '0' + v % 10;
+    if (g_shot_tag) { name[0] = 't'; name[1] = 'r'; name[2] = name[3] = '_'; name[4] = 'f'; name[5] = '0' + g_shot_tag / 10 % 10; name[6] = '0' + g_shot_tag % 10; }
     HANDLE f = CreateFileA(name, 0x40000000, 0, NULL, 2, 0x80, NULL);
     u32 img = g_width * g_height * 4, w;
     u8 hdr[54] = { 'B', 'M' };
@@ -557,7 +561,8 @@ static void maybe_screenshot(void)
         at = 0;
         for (u32 i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) at = at * 10 + (b[i] - '0');
     }
+    if (g_trace_frame && g_frames == g_trace_frame && g_shot_tag < 98) { g_shot_tag = 98; save_screenshot(); }  /* end of the traced frame */
     int f12 = (GetAsyncKeyState(0x7B) & 0x8000) != 0;
-    if ((f12 && !f12_was) || (at && (g_frames == at || g_frames == at * 3 || g_frames == at * 6))) save_screenshot();
+    if ((f12 && !f12_was) || (at && (g_frames == at || g_frames == at * 3 || g_frames == at * 6))) { g_shot_tag = 0; save_screenshot(); }
     f12_was = f12;
 }

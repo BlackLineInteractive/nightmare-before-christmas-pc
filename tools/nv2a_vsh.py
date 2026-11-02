@@ -172,9 +172,10 @@ def hlsl(code, inputs):
     # The Xbox shader ends in screen space (viewport scale c[58], offset c[59],
     # set by the renderer). Back to clip space for Direct3D 9. The NV2A uses w
     # only for perspective-correct interpolation (1/w clamped), so screen-space
-    # vertices may carry w = 0 (the title screen does); those get w = 1.
+    # vertices may carry w = 0 (the title screen does); those get w = 1. A
+    # negative w (behind the camera) stays, so Direct3D clips it.
     s += "  oPos.xyz = (oPos.xyz - c[59].xyz) / c[58].xyz;\n"
-    s += "  if (oPos.w <= 0) oPos.w = 1;\n"
+    s += "  if (oPos.w == 0) oPos.w = 1;\n"
     s += "  oPos.xyz *= oPos.w;\n"
     s += "  VSOUT o;\n" + ''.join(f"  o.{n} = {n}{'.x' if sem in scalar else ''};\n"
                                    for n, sem in OUT_SEMANTICS if n in outs)
