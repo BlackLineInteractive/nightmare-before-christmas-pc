@@ -31,7 +31,9 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 
 > **Current status:** the port boots through the logos, title and menus into the levels, on Windows and under Wine on macOS. Jack (skinned animation, Soul Robber combos), the 3D levels with the game's own lighting (NV2A pixel shaders translated to HLSL), the HUD and the pause / inventory menus work.
 >
-> **Not yet:** sound (XACT is silent), Bink movies (skipped), render-to-texture effects (the Soul Robber glow), fog, the game's gamma ramp. Stencil shadows render correctly but are off by default (`PC_SHADOWS=1`): the game advances one logic step per frame, and with shadows it runs below 60 FPS, so in slow motion.
+> Bink movies play (the game's own YUV → RGB combiner shader), still without sound.
+>
+> **Not yet:** sound (XACT is silent), render-to-texture effects (the Soul Robber glow), fog, the game's gamma ramp. Stencil shadows render correctly but are off by default (`PC_SHADOWS=1`): the game advances one logic step per frame, and with shadows it runs below 60 FPS, so in slow motion.
 
 ---
 
