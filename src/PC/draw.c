@@ -21,8 +21,10 @@ IMPORT HANDLE WINAPI CreateFileA(const char* name, u32 access, u32 share, void* 
  * before NV097_SET_STENCIL_FUNC) and against the setters of the complex states. */
 enum { XRS_ZFUNC = 56, XRS_ALPHAFUNC, XRS_ALPHABLENDENABLE, XRS_ALPHATESTENABLE, XRS_ALPHAREF,
        XRS_SRCBLEND, XRS_DESTBLEND, XRS_ZWRITEENABLE, XRS_DITHERENABLE, XRS_SHADEMODE,
-       XRS_COLORWRITEENABLE, XRS_BLENDOP = 73, XRS_FOGENABLE = 91, XRS_LIGHTING = 101,
-       XRS_FOGCOLOR = 137, XRS_ZENABLE = 142, XRS_STENCILENABLE, XRS_CULLMODE = 146, XRS_TEXTUREFACTOR };
+       XRS_COLORWRITEENABLE, XRS_STENCILZFAIL, XRS_STENCILPASS, XRS_STENCILFUNC, XRS_STENCILREF,
+       XRS_STENCILMASK, XRS_STENCILWRITEMASK, XRS_BLENDOP, XRS_FOGENABLE = 91, XRS_LIGHTING = 101,
+       XRS_FOGCOLOR = 137, XRS_ZENABLE = 142, XRS_STENCILENABLE, XRS_STENCILFAIL, XRS_CULLMODE = 146,
+       XRS_TEXTUREFACTOR };
 /* Xbox D3DTEXTURESTAGESTATETYPE */
 enum { XTS_ADDRESSU, XTS_ADDRESSV, XTS_ADDRESSW, XTS_MAGFILTER, XTS_MINFILTER, XTS_MIPFILTER,
        XTS_COLOROP = 12, XTS_COLORARG0, XTS_COLORARG1, XTS_COLORARG2, XTS_ALPHAOP, XTS_ALPHAARG0,
@@ -31,7 +33,8 @@ enum { XTS_ADDRESSU, XTS_ADDRESSV, XTS_ADDRESSW, XTS_MAGFILTER, XTS_MINFILTER, X
 /* Direct3D 9 enums used here */
 enum { RS_ZENABLE = 7, RS_SHADEMODE = 9, RS_ZWRITEENABLE = 14, RS_ALPHATESTENABLE = 15, RS_SRCBLEND = 19,
        RS_DESTBLEND = 20, RS_CULLMODE = 22, RS_ZFUNC = 23, RS_ALPHAREF = 24, RS_ALPHAFUNC = 25,
-       RS_ALPHABLENDENABLE = 27, RS_FOGENABLE = 28, RS_STENCILENABLE = 52, RS_TEXTUREFACTOR = 60,
+       RS_ALPHABLENDENABLE = 27, RS_FOGENABLE = 28, RS_STENCILENABLE = 52, RS_STENCILFAIL, RS_STENCILZFAIL,
+       RS_STENCILPASS, RS_STENCILFUNC, RS_STENCILREF, RS_STENCILMASK, RS_STENCILWRITEMASK, RS_TEXTUREFACTOR = 60,
        RS_LIGHTING = 137, RS_COLORWRITEENABLE = 168, RS_BLENDOP = 171 };
 enum { TSS_COLOROP = 1, TSS_COLORARG1, TSS_COLORARG2, TSS_ALPHAOP, TSS_ALPHAARG1, TSS_ALPHAARG2,
        TSS_TEXCOORDINDEX = 11, TSS_TEXTURETRANSFORMFLAGS = 24, TSS_COLORARG0 = 26, TSS_ALPHAARG0, TSS_RESULTARG };
@@ -99,6 +102,15 @@ static u32 map_top(u32 v)          /* Xbox D3DTEXTUREOP -> D3D9 */
 {
     static const u8 t[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26 };
     return v < sizeof(t) ? t[v] : 1;
+}
+static u32 map_stencilop(u32 v)    /* Xbox uses GL stencil ops */
+{
+    switch (v) {
+    case 0: return 2;                                      /* ZERO */
+    case 0x1E01: return 3; case 0x1E02: return 4; case 0x1E03: return 5;   /* REPLACE, INCRSAT, DECRSAT */
+    case 0x150A: return 6; case 0x8507: return 7; case 0x8508: return 8;   /* INVERT, INCR, DECR */
+    }
+    return 1;                                              /* KEEP */
 }
 static u32 map_colorwrite(u32 v)   /* Xbox: R<<16, G<<8, B, A<<24 */
 {
@@ -250,6 +262,9 @@ static void default_xbox_state(void)
     XRS(XRS_DESTBLEND) = 0;            /* ZERO */
     XRS(XRS_ZWRITEENABLE) = 1;
     XRS(XRS_COLORWRITEENABLE) = 0x01010101;
+    XRS(XRS_STENCILFUNC) = 0x207;      /* ALWAYS */
+    XRS(XRS_STENCILMASK) = XRS(XRS_STENCILWRITEMASK) = 0xFFFFFFFF;
+    XRS(XRS_STENCILFAIL) = XRS(XRS_STENCILZFAIL) = XRS(XRS_STENCILPASS) = 0x1E00;   /* KEEP */
     XRS(XRS_BLENDOP) = 0x8006;         /* ADD */
     XRS(XRS_ZENABLE) = 1;
     XRS(XRS_CULLMODE) = 0x901;         /* CCW */
@@ -305,9 +320,19 @@ static void apply_state(void)
     rs(RS_CULLMODE, map_cull(XRS(XRS_CULLMODE)));
     rs(RS_LIGHTING, XRS(XRS_LIGHTING) ? 1 : 0);
     rs(RS_FOGENABLE, 0);
-    rs(RS_STENCILENABLE, 0);
+    /* shadow volumes: stencil passes with colour writes off, then the shading */
+    rs(RS_STENCILENABLE, XRS(XRS_STENCILENABLE) ? 1 : 0);
+    if (XRS(XRS_STENCILENABLE)) {
+        rs(RS_STENCILFUNC, map_cmp(XRS(XRS_STENCILFUNC)));
+        rs(RS_STENCILREF, XRS(XRS_STENCILREF) & 0xFF);
+        rs(RS_STENCILMASK, XRS(XRS_STENCILMASK) & 0xFF);
+        rs(RS_STENCILWRITEMASK, XRS(XRS_STENCILWRITEMASK) & 0xFF);
+        rs(RS_STENCILFAIL, map_stencilop(XRS(XRS_STENCILFAIL)));
+        rs(RS_STENCILZFAIL, map_stencilop(XRS(XRS_STENCILZFAIL)));
+        rs(RS_STENCILPASS, map_stencilop(XRS(XRS_STENCILPASS)));
+    }
     rs(RS_TEXTUREFACTOR, XRS(XRS_TEXTUREFACTOR));
-    rs(RS_COLORWRITEENABLE, XRS(XRS_COLORWRITEENABLE) ? map_colorwrite(XRS(XRS_COLORWRITEENABLE)) : 15);
+    rs(RS_COLORWRITEENABLE, map_colorwrite(XRS(XRS_COLORWRITEENABLE)));   /* 0 = no colour (stencil-only passes) */
 
     int ps = bind_pshader();
     for (u32 s = 0; s < 4; s++) {
@@ -483,6 +508,7 @@ static void trace_draw(const char* what, u32 prim, u32 count, const void* v, u32
     p = hx(p, g_stream[0] ? g_stream[0]->Data : 0);
     p = hx(p, g_pshader); p = hx(p, XTS(0, XTS_COLOROP) << 16 | XTS(0, XTS_COLORARG1) << 8 | XTS(0, XTS_COLORARG2));
     p = hx(p, XTS(1, XTS_COLOROP));
+    p = hx(p, XRS(XRS_COLORWRITEENABLE)); p = hx(p, XRS(XRS_STENCILENABLE) << 16 | XRS(XRS_STENCILFUNC));
     *p++ = ' '; *p++ = '|';
     if (v) for (u32 i = 0; i < stride / 4 && i < 6; i++) p = hx(p, ((const u32*)v)[i]);
     *p++ = '\n'; *p = 0;
