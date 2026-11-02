@@ -33,9 +33,9 @@ Instead of running inside an emulator or waiting for a multi-year decompilation,
 
 > **Current status:** the port boots through the logos, title and menus into the levels, on Windows and under Wine on macOS. Jack (skinned animation, Soul Robber combos), the 3D levels with the game's own lighting (NV2A pixel shaders translated to HLSL), the HUD and the pause / inventory menus work.
 >
-> Bink movies play (the game's own YUV → RGB combiner shader), still without sound.
+> **Sound** plays the game's own XACT banks (music, effects, voices) and the sound of the Bink movies; movies play with the game's YUV → RGB combiner shader. Engine cutscenes stay in sync with their sound: when a frame is late the next one is computed but not drawn (frame skip), so the game logic keeps real time.
 >
-> **Not yet:** sound (XACT is silent), render-to-texture effects (the Soul Robber glow), fog, the game's gamma ramp. Stencil shadows render correctly but are off by default (`PC_SHADOWS=1`): the game advances one logic step per frame, and with shadows it runs below 60 FPS, so in slow motion.
+> **Not yet:** 3D positioning of sounds and reverb, render-to-texture effects (the Soul Robber glow), fog, the game's gamma ramp. Stencil shadows render correctly but are off by default (`PC_SHADOWS=1`), they cost too many draw calls under Wine. Busy scenes (Oogie's Town) still drop drawn frames.
 
 ---
 
@@ -123,7 +123,7 @@ The original Xbox uses an Intel Pentium III (x86 32-bit). Because modern PCs als
          ├── NV2A Shaders ─────► HLSL (nv2a_vsh.py)
          ├── XPP Gamepad ──────► XInput + Keyboard (input.c)
          ├── NV2A combiners ───► HLSL pixel shaders (nv2a_psh.py, pshader.c)
-         └── XACT Sound ───────► silent stubs for now (audio.c)
+         └── XACT / DSound ────► own mixer + waveOut (audio.c)
 ```
 
 ### Porting Route
@@ -135,7 +135,7 @@ Static analysis confirmed **the game code itself (`0x12000`-`0x1A0000`) never ca
 | **XAPI + LIBC** | `.text` `0x1A0000`-`0x1D22A8` | 320 | Direct jumps to Win32 `kernel32.dll` / `ntdll.dll` |
 | **D3D8 (NV2A)** | `D3D` | 37 | Direct3D 9 backend (`src/PC/render.c`, `draw.c`, `vshader.c`) |
 | **XPP (Input)** | `XPP` | 160 | XInput + Keyboard mapping (`src/PC/input.c`) |
-| **XACT / DSOUND** | `XACTENG` / `DSOUND` | 326 | Audio stubs & notification pumps (`src/PC/audio.c`) |
+| **XACT / DSOUND** | `XACTENG` / `DSOUND` | 326 | XACT engine and the DirectSound buffer Bink uses, on a 48 kHz mixer and waveOut (`src/PC/audio.c`) |
 | **WMADEC** | `WMADEC` | 13 | Audio decoder (stubbed) |
 
 ---
@@ -156,6 +156,7 @@ Control runtime behavior via environment variables:
 | `PC_FRAMESKIP=0` | Draw every frame even when the game falls behind real time (it then runs in slow motion) |
 | `PC_NOSOUND=1` / `PC_AUDIODUMP=1` | No sound / also write the mixed sound to `audio_dump.raw` (48 kHz stereo 16-bit) |
 | `PC_FLAT=1` | Draw without the game's pixel shaders (Direct3D 9 texture stages only) |
+| `PC_PROFILE=1` | Log every 5 s where the main thread spends its time (sampling profiler) |
 | `PC_SHADOWS=1` | Turn the stencil shadows on (`v`: only the volumes, `s`: only the shading pass) |
 
 A trace writes one line per draw plus `tr__*.bmp` screenshots at each vertex shader change. Every 64 frames the log shows FPS and where the frame time goes (Present, draw calls, texture uploads, vertex bytes copied, batched draws).
@@ -163,6 +164,20 @@ A trace writes one line per draw plus `tr__*.bmp` screenshots at each vertex sha
 ### Performance notes
 
 Direct3D 9 under Wine on macOS goes through wined3d and OpenGL, which costs ~30-100 µs per draw call. The renderer caches the game's vertex buffers in MANAGED buffers (checksummed once per frame), streams the rest through one SYSTEMMEM ring, skips redundant state changes and batches the ~1700 tiny shadow strips per frame into a few hundred draws. Menus run at 60 FPS; levels at 30-60 without shadows.
+
+The game advances one logic step per frame (1/60 s on the Xbox), so a late frame would mean slow motion and sound running ahead of cutscenes. When the game falls a whole frame behind real time, the next frame runs without being drawn and starts without waiting for a vblank (at most two in a row); the log line `frames not drawn` counts them, `PC_FRAMESKIP=0` turns it off.
+
+`PC_PROFILE=1` samples the main thread every millisecond and logs every 5 s where the time goes (game code, Xbox libraries, `src/PC`, Wine) with the hottest addresses.
+
+### Sound
+
+`src/PC/audio.c` replaces XACT and plays the game's banks from `XACT_data/`:
+
+- **Wave banks** (`.xwb`, `WBND` v3): Xbox ADPCM (36-byte blocks, 64 samples per channel) or 16-bit PCM, in memory or streamed from the disc files (music, voices, demos).
+- **Sound banks** (`.xsb`, `SDBK` v11): cue → sound → tracks → events. Events: play wave (with loop count), pitch and volume variation, volume-by-variation tables (one layer of each music cue plays).
+- **The game's protocol:** every cue is prepared (`PlayEx` flag 8) and then started (flag 4); it registers *sound cue stopped* notifications and waits for them (chapter cards, demos); Stop fades out over 250 ms.
+- **Bink movie sound** goes through the one looping DirectSound buffer Bink writes into (`SetBufferData`, `Lock`, `GetCurrentPosition`).
+- A mixer thread resamples every voice to 48 kHz stereo and feeds `waveOut`. Sounds start `PC_AUDIODELAY` ms (default 100) late to line up with the picture.
 
 ---
 
