@@ -235,7 +235,6 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
 ├── src/
 │   ├── PC/                  # The port's runtime: D3D9 renderer, shaders, input, audio, memory, libc glue
 │   │                        #   (one i386 object, linked into default_pc.exe by tools/coff_link.py)
-│   ├── Host/                # Earlier HLE-kernel prototype (CMake target oogie_port, not used by the port)
 │   ├── Viewer/              # Interactive 3D asset viewer app
 │   └── SG/, Loader/         # Scene graph, P2OD & STM parsers
 ├── docs/                    # Reverse-Engineering specifications
@@ -251,8 +250,7 @@ Includes: `default.xbe` structure, Capcom LZ Type 2 decompression, `@STM` contai
     ├── xbsymscan.py         # finds XDK library functions in default.xbe
     ├── extract_xbox_iso.py  # XDVDFS disc image extractor
     ├── capcom_tool.py       # LZ decompression & @STM extraction (viewer data)
-    ├── structure_stm.py     # catalogues extracted stages for the viewer
-    └── legacy/              # early prototypes, not used
+    └── structure_stm.py     # catalogues extracted stages for the viewer
 ```
 
 ---
